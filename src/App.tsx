@@ -2707,6 +2707,10 @@ function App() {
     persistGame(finalGame)
     matchAudioPhaseRef.current = { playbackId: playback.id, lastMinute: 0, phase: 'playing' }
     startMatchAudio()
+    const orientation = window.screen.orientation
+    if (typeof orientation?.lock === 'function') {
+      void orientation.lock('portrait').catch(() => {})
+    }
     setMatchPlayback(playback)
   }
 
@@ -5927,9 +5931,12 @@ function LiveMatchOverlay({ playback, onSkip, onResume, onIntermissionUpdate, on
   }, [playback.finished, playback.halftimePaused])
 
   return <div className="live-match-backdrop">
-    <section className="live-match-modal" role="dialog" aria-modal="true" aria-labelledby="live-match-title">
+    <section className={`live-match-modal${showHalftimeChanges && playback.halftimePaused ? ' live-match-modal-intermission' : ''}`} role="dialog" aria-modal="true" aria-labelledby="live-match-title">
       <div className="live-match-header">
-        <span className="live-match-status"><i className={playback.finished || playback.halftimePaused ? '' : 'live-match-pulse'} />{playback.finished ? 'KONIEC MECZU' : playback.halftimePaused ? 'PRZERWA · CZAS NA ZMIANY' : 'RELACJA NA ŻYWO'}</span>
+        <div className="live-match-brand">
+          <img className="live-match-logo" src="/images/pmp27-crest.png" alt="PMP27" />
+          <span className="live-match-status"><i className={playback.finished || playback.halftimePaused ? '' : 'live-match-pulse'} />{playback.finished ? 'KONIEC MECZU' : playback.halftimePaused ? 'PRZERWA · CZAS NA ZMIANY' : 'RELACJA NA ŻYWO'}</span>
+        </div>
         <span className="live-match-round">{playback.competitionLabel}{playback.competitionLabel === 'SPARING PRZEDSEZONOWY' || playback.competitionLabel === 'PUCHAR MISTRZÓW' ? ' · MECZ' : ` · ${isCupPlayback ? 'RUNDA' : 'KOLEJKA'} ${playback.round}`}</span>
       </div>
       <div className="live-match-scoreboard">

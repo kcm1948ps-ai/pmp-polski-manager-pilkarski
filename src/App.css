@@ -406,9 +406,12 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .pre-match-settings > summary > svg:last-child { margin-left: auto; transition: transform .15s ease; }
 .pre-match-settings[open] > summary > svg:last-child { transform: rotate(180deg); }
 .pre-match-settings > .match-squad-panel, .pre-match-settings > .tactics-panel { margin: 0 12px 13px; }
-.live-match-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; overflow-y: auto; padding: 22px; background: #080c09e8; backdrop-filter: blur(8px); }
-.live-match-modal { width: min(1100px, 100%); max-height: calc(100vh - 44px); overflow-y: auto; padding: 17px; border: 1px solid #394635; border-radius: 12px; background: #151b17; box-shadow: 0 24px 90px #000a; }
+.live-match-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; overflow: hidden; padding: 22px; background: #080c09e8; backdrop-filter: blur(8px); }
+.live-match-modal { width: min(1100px, 100%); max-height: calc(100vh - 44px); max-height: calc(100dvh - 44px); overflow-y: auto; padding: 17px; border: 1px solid #394635; border-radius: 12px; background: #151b17; box-shadow: 0 24px 90px #000a; }
+.live-match-modal-intermission { display: block; overflow-y: auto; }
 .live-match-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid #2a332c; }
+.live-match-brand { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.live-match-logo { width: 26px; height: 26px; flex: 0 0 auto; object-fit: contain; }
 .live-match-status, .live-match-round { display: inline-flex; align-items: center; gap: 7px; color: #9ca79d; font-size: 8px; font-weight: 700; letter-spacing: .9px; }
 .live-match-status i { width: 6px; height: 6px; border-radius: 50%; background: #849082; }
 .live-match-status .live-match-pulse { background: var(--lime); box-shadow: 0 0 9px #d8fa5480; animation: live-pulse 1s infinite; }
@@ -1975,7 +1978,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .finance-ledger-grid { grid-template-columns: 1fr; }
   .availability-pitch-row { grid-template-columns: 25px minmax(0, 1fr); }
   .availability-pitch-row .availability-detail { grid-column: 2; text-align: left; }
-  body { min-width: 360px; }
+  body { min-width: 320px; }
   .topbar { height: 56px; padding: 0 15px; }
   .topbar-brand { width: 88px; height: 29px; margin-right: 10px; }
   .breadcrumbs { gap: 6px; font-size: 9px; }
@@ -2007,14 +2010,50 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .match-team .club-crest-large, .opponent-crest.club-crest { width: 44px; height: 49px; }
   .match-card-footer { align-items: flex-start; flex-direction: column; gap: 10px; }
   .match-card-footer .primary-button { width: 100%; }
-  .live-match-header { align-items: flex-start; flex-direction: column; gap: 6px; }
-  .live-match-scoreboard { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px; padding-right: 0; padding-left: 0; }
-  .live-match-team { font-size: 9px; }
-  .live-match-scoreboard > strong { font-size: 20px; }
-  .live-match-pitch { min-height: 210px; }
-  .live-match-halftime-actions { gap: 10px; padding: 12px; }
-  .live-match-halftime-actions p { font-size: 13px; }
-  .live-match-halftime-actions button { min-width: 100px; }
+  .live-match-backdrop { padding: 0; }
+  .live-match-modal { display: grid; grid-template-rows: auto auto auto auto minmax(34px, 57px) auto; align-content: center; gap: 0; width: 100%; height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; overflow-y: auto; padding: max(7px, env(safe-area-inset-top)) 8px max(7px, env(safe-area-inset-bottom)); border: 0; border-radius: 0; }
+  .live-match-modal-intermission { display: block; }
+  .live-match-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; padding-bottom: 6px; }
+  .live-match-logo { width: 20px; height: 20px; }
+  .live-match-status, .live-match-round { font-size: 7px; }
+  .live-match-round { justify-self: start; grid-column: 1; grid-row: 2; }
+  .live-match-scoreboard { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 4px; padding: 7px 0; }
+  .live-match-team { font-size: 8px; }
+  .live-match-scoreboard > strong { font-size: 18px; }
+  .live-match-clock { margin-top: 0; padding: 3px 8px; font-size: 8px; }
+  .live-match-field-layout { grid-template-columns: minmax(70px, .75fr) minmax(105px, 1.5fr) minmax(70px, .75fr); align-items: stretch; gap: 4px; min-height: 0; }
+  .live-match-pitch { grid-column: auto; grid-row: auto; min-height: 0; height: 100%; }
+  .live-match-lineup-home, .live-match-lineup-away { grid-row: auto; }
+  .live-match-lineup { padding: 5px 3px; }
+  .live-match-lineup h3 { font-size: 7px; }
+  .live-match-lineup-label { margin: 3px 0 4px; font-size: 5px; letter-spacing: .3px; }
+  .live-match-lineup-group { margin-top: 3px; padding: 1px; border-left-width: 1px; }
+  .live-match-lineup ol { gap: 1px; }
+  .live-match-lineup li { grid-template-columns: minmax(0, 1fr) 11px; gap: 1px; padding: 2px 1px; }
+  .live-match-lineup-position { grid-column: 1 / -1; font-size: 5px; line-height: 1; }
+  .live-match-lineup-player { display: block; }
+  .live-match-lineup-player strong { font-size: 6px; line-height: 1.1; }
+  .live-match-lineup-player small { display: none; }
+  .live-match-lineup li > b { font-size: 6px; }
+  .live-pitch-player { width: 15px; height: 15px; font-size: 6px; }
+  .live-pitch-team-name { left: 3px; max-width: calc(100% - 6px); gap: 3px; padding: 3px; font-size: 5px; }
+  .live-pitch-team-name i { width: 6px; height: 6px; }
+  .live-pitch-team-home { bottom: 3px; }
+  .live-pitch-team-away { top: 3px; }
+  .live-pitch-circle { width: 46px; height: 46px; }
+  .live-match-commentary { min-height: 0; gap: 6px; margin-top: 6px; padding: 6px 7px; }
+  .live-match-commentary p { font-size: 8px; line-height: 1.35; }
+  .live-match-feed { max-height: 57px; overflow: hidden; margin-top: 3px; }
+  .live-match-feed-row { grid-template-columns: 25px minmax(0, 1fr) 34px; gap: 5px; padding: 3px 1px; }
+  .live-match-feed-row:nth-child(-n+2) { display: none; }
+  .live-match-feed-row > span, .live-match-feed-row p, .live-match-feed-row strong { font-size: 7px; }
+  .live-match-footer { gap: 5px; padding-top: 5px; font-size: 7px; }
+  .live-match-skip { padding: 6px 7px; font-size: 7px; }
+  .live-match-halftime-actions { gap: 7px; padding: 8px; }
+  .live-match-halftime-actions p { font-size: 12px; }
+  .live-match-halftime-actions button { min-width: 90px; min-height: 34px; }
+  .live-match-footer { align-items: center; flex-direction: row; }
+  .live-match-footer .primary-button, .live-match-skip { justify-content: center; width: auto; }
   .match-statistics-result { grid-template-columns: 1fr; gap: 14px; }
   .match-statistics-result h2 { font-size: 18px; }
   .match-finance-summary, .match-finance-columns { grid-template-columns: 1fr; }
@@ -2028,8 +2067,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .live-match-intermission .football-pitch { min-height: 320px; }
   .live-match-intermission .tactics-layout { grid-template-columns: 1fr; }
   .live-match-intermission .tactics-controls { grid-template-columns: 1fr; }
-  .live-match-footer { align-items: stretch; flex-direction: column; }
-  .live-match-footer .primary-button, .live-match-skip { justify-content: center; width: 100%; }
+  .live-match-footer { align-items: center; flex-direction: row; }
+  .live-match-footer .primary-button, .live-match-skip { justify-content: center; width: auto; }
   .pre-match-settings > summary { min-height: 40px; }
   .season-finished { align-items: flex-start; flex-wrap: wrap; justify-content: flex-start; padding: 18px; }
   .season-finished .primary-button { width: 100%; }
@@ -2096,13 +2135,6 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .calendar-next-actions .secondary-button { width: 100%; }
   .section-title-row { align-items: flex-start; flex-direction: column; gap: 8px; }
   .section-title-actions { width: 100%; justify-content: space-between; }
-  .live-match-backdrop { padding: 12px; }
-  .live-match-modal { max-height: calc(100vh - 24px); padding: 13px; }
-  .live-match-pitch { min-height: 230px; }
-  .live-match-field-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .live-match-pitch { grid-column: 1 / -1; grid-row: 1; }
-  .live-match-lineup-home, .live-match-lineup-away { grid-row: 2; }
-  .live-match-lineup li { grid-template-columns: 22px minmax(0, 1fr) 20px; }
   .tactics-layout { grid-template-columns: 1fr; }
   .tactics-preview { max-width: 220px; }
   .tactics-controls { grid-template-columns: 1fr; }
