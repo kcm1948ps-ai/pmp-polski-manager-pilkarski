@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="768" viewBox="0 0 1400 768" fill="none">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1400" y2="768" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#14251E"/>
+      <stop offset="1" stop-color="#07111A"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="185" y1="192" x2="450" y2="550" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7D36D"/>
+      <stop offset=".52" stop-color="#E9A43B"/>
+      <stop offset="1" stop-color="#B95B2D"/>
+    </linearGradient>
+    <linearGradient id="wordmark" x1="520" y1="310" x2="1230" y2="450" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF8E7"/>
+      <stop offset="1" stop-color="#D9E5D2"/>
+    </linearGradient>
+  </defs>
+  <rect width="1400" height="768" rx="24" fill="url(#background)"/>
+  <path d="M0 620 1400 245v523H0V620Z" fill="#162A22" opacity=".55"/>
+  <path d="M0 686 1400 312" stroke="#D59B43" stroke-opacity=".23" stroke-width="3"/>
+  <circle cx="318" cy="374" r="220" fill="#172C24" stroke="#D59B43" stroke-opacity=".4" stroke-width="3"/>
+  <circle cx="318" cy="374" r="184" stroke="#F0BE58" stroke-opacity=".22" stroke-width="2" stroke-dasharray="4 16"/>
+  <path d="m344 190-128 171h91l-49 199 164-225h-99l74-145h-53Z" fill="url(#spark)"/>
+  <path d="m221 489 68-86h-61l35-48" stroke="#F9E7A8" stroke-linecap="round" stroke-linejoin="round" stroke-width="12" opacity=".78"/>
+  <circle cx="473" cy="242" r="13" fill="#A9C875"/>
+  <circle cx="180" cy="298" r="8" fill="#F1C45E"/>
+  <path d="M510 495h710" stroke="#D59B43" stroke-opacity=".65" stroke-width="3"/>
+  <text x="510" y="406" fill="url(#wordmark)" font-family="Arial, Helvetica, sans-serif" font-size="128" font-weight="800" letter-spacing="5">ISKRA</text>
+  <text x="519" y="590" fill="#E8B34C" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="700" letter-spacing="18">PALIWA</text>
+  <text x="1220" y="589" fill="#A9C875" font-family="Arial, Helvetica, sans-serif" font-size="29" font-weight="700" letter-spacing="4" text-anchor="end">ENERGIA W RUCHU</text>
+</svg>

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 768" fill="none">
+  <defs>
+    <linearGradient id="gold" x1="128" y1="108" x2="387" y2="617" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF1B0"/>
+      <stop offset=".22" stop-color="#DDBB65"/>
+      <stop offset=".48" stop-color="#FFF0A3"/>
+      <stop offset=".72" stop-color="#A97528"/>
+      <stop offset="1" stop-color="#F3D889"/>
+    </linearGradient>
+    <linearGradient id="shadow" x1="256" y1="160" x2="256" y2="606" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#684516"/>
+      <stop offset=".5" stop-color="#A9792A"/>
+      <stop offset="1" stop-color="#543710"/>
+    </linearGradient>
+    <linearGradient id="base" x1="138" y1="610" x2="374" y2="718" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#192B4A"/>
+      <stop offset=".5" stop-color="#31527D"/>
+      <stop offset="1" stop-color="#14213A"/>
+    </linearGradient>
+  </defs>
+  <path d="M136 132c-57-14-86 12-84 61 2 58 47 103 115 119l17-38c-48-15-75-43-77-77-1-18 9-27 31-20l-2-45Zm240 0c57-14 86 12 84 61-2 58-47 103-115 119l-17-38c48-15 75-43 77-77 1-18-9-27-31-20l2-45Z" stroke="url(#gold)" stroke-width="17" stroke-linejoin="round"/>
+  <path d="M256 68c-10-19-33-23-44-11-12 13-4 30 12 37l-13 18h90l-13-18c16-7 24-24 12-37-11-12-34-8-44 11Z" fill="url(#gold)" stroke="#FFE9A0" stroke-width="5"/>
+  <path d="M154 148h204l-17 172c-7 72-36 125-85 153-49-28-78-81-85-153l-17-172Z" fill="url(#gold)" stroke="#FFE9A0" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M177 169h158l-14 145c-6 55-25 94-65 119-40-25-59-64-65-119l-14-145Z" fill="url(#shadow)" stroke="#855D24" stroke-width="5"/>
+  <path d="M206 205h100v100H206z" fill="#24354B" stroke="url(#gold)" stroke-width="6" transform="rotate(45 256 255)"/>
+  <path d="m256 215 10 20 22 3-16 15 4 22-20-10-20 10 4-22-16-15 22-3 10-20Z" fill="url(#gold)"/>
+  <path d="M186 344h140" stroke="#E8CE82" stroke-width="3" opacity=".8"/>
+  <text x="256" y="382" fill="#FFF0B1" font-family="Georgia,serif" font-size="29" font-weight="700" letter-spacing="3" text-anchor="middle">MISTRZ</text>
+  <text x="256" y="418" fill="#FFF0B1" font-family="Georgia,serif" font-size="29" font-weight="700" letter-spacing="3" text-anchor="middle">LIGI</text>
+  <path d="M211 447h90" stroke="#E8CE82" stroke-width="2" opacity=".8"/>
+  <path d="M216 470h80l18 47H198l18-47Z" fill="url(#gold)" stroke="#FFE9A0" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M202 518h108l13 27H189l13-27Z" fill="url(#shadow)" stroke="url(#gold)" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M190 545h132l29 72H161l29-72Z" fill="url(#gold)" stroke="#FFE9A0" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M177 563h158" stroke="#80591F" stroke-width="4" opacity=".75"/>
+  <path d="M139 610h234l35 87H104l35-87Z" fill="url(#base)" stroke="url(#gold)" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M122 643h268M112 674h288" stroke="#DAB95F" stroke-width="3" opacity=".8"/>
+  <path d="M223 624h66v57h-66z" fill="#1C304E" stroke="url(#gold)" stroke-width="5"/>
+  <text x="256" y="653" fill="#F8E4A0" font-family="Arial,sans-serif" font-size="15" font-weight="700" letter-spacing="2" text-anchor="middle">PMP</text>
+  <text x="256" y="671" fill="#F8E4A0" font-family="Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="1.5" text-anchor="middle">LIGA</text>
+  <path d="M82 704h348v20H82z" fill="url(#gold)" stroke="#FFE9A0" stroke-width="5"/>
+  <ellipse cx="256" cy="724" rx="176" ry="15" fill="#13223A" stroke="url(#gold)" stroke-width="5"/>
+</svg>
