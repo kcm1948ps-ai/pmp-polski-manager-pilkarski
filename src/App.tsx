@@ -58,7 +58,6 @@ import {
   ensureUniqueGamePlayerNames,
   getClubCity,
   getClub,
-  getClubChallenges,
   getClubRivalryLevel,
   getDerbyKind,
   getLeagueChampionTrophyName,
@@ -189,11 +188,6 @@ import './App.css'
 type Section = 'overview' | 'squad' | 'availability' | 'tactics' | 'calendar' | 'matches' | 'standings' | 'statistics' | 'player-statistics' | 'match-stats' | 'other-leagues' | 'cup' | 'regional-cup' | 'pmp-league' | 'transfers' | 'inbox' | 'scouting' | 'academy' | 'finances' | 'club' | 'media' | 'history' | 'board' | 'settings'
 const SECTIONS: Section[] = ['overview', 'squad', 'availability', 'tactics', 'calendar', 'matches', 'standings', 'statistics', 'player-statistics', 'match-stats', 'other-leagues', 'cup', 'regional-cup', 'pmp-league', 'transfers', 'inbox', 'scouting', 'academy', 'finances', 'club', 'media', 'history', 'board', 'settings']
 type DeferredSection = Extract<Section, 'club' | 'history' | 'board' | 'media'>
-type NextStep = { id: string; title: string; description: string; actionLabel: string; icon: ReactNode; onClick: () => void }
-type ActiveNextStep = Pick<NextStep, 'id' | 'title' | 'description'> & {
-  round: number
-  season: string
-}
 const MATCH_HALF_DURATION_MS = 30_000
 const MATCHDAY_FALLBACK_DATE = new Date()
 const GAME_MUSIC_VOLUME_KEY = 'polski-manager-music-volume'
@@ -1985,9 +1979,8 @@ function App() {
   const [careerCustomization, setCareerCustomization] = useState(careerCustomizationLoad.customization)
   const [musicMuted, setMusicMuted] = useState(() => readStorage('polski-manager-music-muted') === 'true')
   const [musicVolume, setMusicVolume] = useState(getSavedMusicVolume)
-  const [nextStepDismissed, setNextStepDismissed] = useState(false)
   const [section, setSection] = useState<Section>('overview')
-  const [activeNextStep, setActiveNextStep] = useState<ActiveNextStep | null>(null)
+  const [autoOpenInboxMessageId, setAutoOpenInboxMessageId] = useState<string | null>(null)
   const [calendarSimulationDate, setCalendarSimulationDate] = useState<string | null>(null)
   const [calendarSimulationTargetDate, setCalendarSimulationTargetDate] = useState<string | null>(null)
   const [calendarSimulationActive, setCalendarSimulationActive] = useState(false)
@@ -2026,6 +2019,7 @@ function App() {
   const musicVolumeRef = useRef(musicVolume)
   const sectionHistoryInitializedRef = useRef(false)
   const skipSectionHistoryPushRef = useRef(false)
+  const knownInboxMessageIdsRef = useRef(new Set(initialSave.game?.inboxMessages?.map((message) => message.id) ?? []))
   const calendarSimulationActiveRef = useRef(false)
   const scrollToMatchdayOnOverviewRef = useRef(false)
   const scrollToMatchStatisticsRef = useRef(false)
@@ -2394,6 +2388,7 @@ function App() {
   })
 
   function navigateToSection(nextSection: Section) {
+    if (nextSection !== 'inbox') setAutoOpenInboxMessageId(null)
     setSection(nextSection)
     setMobileNavOpen(false)
   }
@@ -2410,37 +2405,20 @@ function App() {
     navigateToSection('finances')
   }
 
-  const selectNextStep = useCallback((task: NextStep) => {
-    setNextStepDismissed(false)
-    setActiveNextStep({
-      id: task.id,
-      title: task.title,
-      description: task.description,
-      round: game?.round ?? 0,
-      season: game?.season ?? '',
-    })
-  }, [game])
-
   const updateGame = useCallback((next: GameState, message = '') => {
-    setActiveNextStep((active) => {
-      if (!active) return null
-      const completed = (
-        (active.id === 'sponsor' && !next.sponsorRequired)
-        || (active.id === 'match-event' && !next.pendingMatchEvent)
-        || (active.id === 'cup-bye' && (next.round > active.round || getNextScheduledCompetition(next) !== 'polish-cup'))
-        || (active.id === 'match-preparation' && next.sponsorRequired)
-        || (active.id === 'squad-shortage' && next.squad.filter((player) =>
-          (player.contractSeasonsRemaining ?? 2) > 1 && player.age + 1 < 38,
-        ).length >= 11)
-        || (active.id === 'new-season' && next.season !== active.season)
-        || ((active.id === 'cup-bye' || active.id === 'league-bye' || active.id === 'match-preparation') && next.round > active.round)
-        || (active.id === 'academy-prospect' && !next.academyProspect)
-        || (active.id === 'scout-report' && !next.scouts.some((scout) => scout.prospect))
-        || (active.id === 'facility-construction' && !next.facilityConstruction)
-        || (active.id === 'financial-goal' && (!next.boardGoal || next.cash >= next.boardGoal.targetCash))
+    const knownMessageIds = knownInboxMessageIdsRef.current
+    const newUnreadMessage = (next.inboxMessages ?? []).find((inboxMessage) =>
+      !inboxMessage.read && !knownMessageIds.has(inboxMessage.id),
+    )
+    for (const inboxMessage of next.inboxMessages ?? []) knownMessageIds.add(inboxMessage.id)
+    if (newUnreadMessage) {
+      next.inboxMessages = (next.inboxMessages ?? []).map((inboxMessage) =>
+        inboxMessage.id === newUnreadMessage.id ? { ...inboxMessage, read: true } : inboxMessage,
       )
-      return completed ? null : active
-    })
+      setAutoOpenInboxMessageId(newUnreadMessage.id)
+      setSection('inbox')
+    }
+
     let customizationError = ''
     if (game) {
       const updatedCustomization = { ...careerCustomization }
@@ -3563,9 +3541,9 @@ function App() {
     saveSlots.forEach((slotId) => removeStorage(`polski-manager-save-${slotId}`))
     removeStorage('polski-manager-active-slot')
     setSavingError('')
+    knownInboxMessageIdsRef.current = new Set()
+    setAutoOpenInboxMessageId(null)
     setGame(null)
-    setActiveNextStep(null)
-    setNextStepDismissed(false)
     setNotice('Kariera została usunięta. Możesz zacząć nową trasę menedżera.')
     setSection('overview')
     setSetupName(careerCustomization.clubName)
@@ -3593,9 +3571,9 @@ function App() {
         return
       }
       persistGame(restored, slotId)
+      knownInboxMessageIdsRef.current = new Set(restored.inboxMessages?.map((message) => message.id) ?? [])
+      setAutoOpenInboxMessageId(null)
       setGame(restored)
-      setActiveNextStep(null)
-      setNextStepDismissed(false)
       setNotice(`Wczytano ${saveSlotLabels[slotId]}: ${restored.clubName}.`)
       setSection('overview')
     } catch (error) {
@@ -3635,9 +3613,9 @@ function App() {
       const targetSlot = availableSlot ?? activeSaveSlot
       if (!availableSlot && !window.confirm(`Wszystkie sloty są zajęte. Czy nadpisać ${saveSlotLabels[targetSlot]}?`)) return
       persistGame(next, targetSlot)
+      knownInboxMessageIdsRef.current = new Set(next.inboxMessages?.map((message) => message.id) ?? [])
+      setAutoOpenInboxMessageId(null)
       setGame(next)
-      setActiveNextStep(null)
-      setNextStepDismissed(false)
       setNotice(`Wczytano zapis klubu ${next.clubName}.`)
       setSection('overview')
     } catch (error) {
@@ -3735,7 +3713,10 @@ function App() {
       </div>
       <input ref={fileInputRef} type="file" accept="application/json" hidden onChange={handleImportSave} />
       <button className="sidebar-help" onClick={() => setNotice('To wczesny prototyp gry. Postępy zapisują się lokalnie w tej przeglądarce.')}><CircleHelp size={16} /> Pomoc i informacje</button>
-      <div className="sidebar-footer"><span className="online-dot" /> Kariera zapisana lokalnie</div>
+      <div className={`sidebar-footer ${savingError ? 'sidebar-footer-error' : ''}`} role="status" aria-live="polite">
+        <span className="online-dot" />
+        {savingError ? 'Błąd zapisu kariery' : 'Kariera zapisana lokalnie'}
+      </div>
     </aside>
     {mobileNavOpen && <button className="mobile-scrim" aria-label="Zamknij menu" onClick={() => setMobileNavOpen(false)} />}
 
@@ -3762,18 +3743,6 @@ function App() {
       </header>
 
       <div className="page-content">
-        {activeNextStep && <section className="active-next-step" aria-label="Podpowiedź do wykonania">
-          <span className="active-next-step-icon"><Target size={17} /></span>
-          <span className="active-next-step-copy"><small>PODPOWIEDŹ DLA CIEBIE</small><strong>{activeNextStep.title}</strong><span>{activeNextStep.description}</span></span>
-          <button className="active-next-step-return" onClick={() => {
-            if (section !== 'overview') navigateToSection('overview')
-            window.requestAnimationFrame(() => document.getElementById('matchday-center-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
-          }}>{section === 'overview' ? 'Pokaż centrum' : 'Wróć do centrum'} <ArrowRight size={14} /></button>
-          <button className="active-next-step-dismiss" aria-label="Zamknij podpowiedź" title="Zamknij podpowiedź" onClick={() => {
-            setActiveNextStep(null)
-            setNextStepDismissed(true)
-          }}><X size={15} /></button>
-        </section>}
         <div className="page-heading">
           <div><p className="eyebrow">CENTRUM ZARZĄDZANIA</p><h1>{pageTitle}</h1></div>
           <button className="date-pill" onClick={() => navigateToSection('calendar')}><CalendarDays size={15} />{nextCompetition === 'friendly'
@@ -3816,9 +3785,7 @@ function App() {
           onOpenClubProfile={(teamId) => setClubProfileTeamId(teamId)}
           onStartSeason={handleStartSeason}
           onNavigate={navigateToSection}
-          onSelectAction={selectNextStep}
-          activeNextStep={activeNextStep}
-          nextStepDismissed={nextStepDismissed}
+          onNavigateToSponsorOffers={navigateToSponsorOffers}
         />}
         {section === 'calendar' && <CalendarPage
           game={game}
@@ -3855,10 +3822,17 @@ function App() {
           onUpdate={updateGame}
           onOpenProfile={(player, clubName) => setPlayerProfile({ player, clubName, isOwnPlayer: false })}
         />}
-        {section === 'inbox' && <MailboxPage game={game} onUpdate={updateGame} onNavigate={navigateToSection} onNavigateToSponsorOffers={navigateToSponsorOffers} />}
+        {section === 'inbox' && <MailboxPage
+          key={autoOpenInboxMessageId ?? 'inbox'}
+          game={game}
+          onUpdate={updateGame}
+          onNavigate={navigateToSection}
+          onNavigateToSponsorOffers={navigateToSponsorOffers}
+          autoOpenMessageId={autoOpenInboxMessageId}
+        />}
         {section === 'scouting' && <ScoutingPage game={game} onUpdate={updateGame} />}
         {section === 'academy' && <AcademyPage game={game} onUpdate={updateGame} />}
-        {section === 'finances' && <FinancesPage game={game} onUpdate={updateGame} />}
+        {section === 'finances' && <FinancesPage game={game} onUpdate={updateGame} onNavigate={navigateToSection} />}
         {section === 'settings' && <GameSettingsPage
           musicMuted={musicMuted}
           musicVolume={musicVolume}
@@ -4136,11 +4110,8 @@ function OverviewPage(props: {
   onOpenClubProfile: (teamId: string) => void
   onStartSeason: () => void
   onNavigate: (section: Section) => void
-  onSelectAction: (task: NextStep) => void
-  activeNextStep: ActiveNextStep | null
-  nextStepDismissed: boolean
+  onNavigateToSponsorOffers: () => void
 }) {
-  const { onSelectAction, activeNextStep, nextStepDismissed } = props
   const unreadMailCount = props.game.inboxMessages?.filter((message) => !message.read).length ?? 0
   const pmpClubMatch = props.nextCompetition === 'pmp-league'
     ? getPmpLeagueNextMatch(props.game)
@@ -4178,7 +4149,6 @@ function OverviewPage(props: {
   const playoffOpponent = playoffOpponentId
     ? Object.values(props.game.leagueWorld ?? {}).flat().find((team) => team.id === playoffOpponentId) ?? null
     : null
-  const cupOpponentName = cupOpponentId ? getTeamName(props.game, cupOpponentId) : ''
   const championsCupOpponentId = props.nextChampionsCupMatch
     ? props.nextChampionsCupMatch.homeId === props.game.teamId
       ? props.nextChampionsCupMatch.awayId
@@ -4260,144 +4230,6 @@ function OverviewPage(props: {
   const selectedDerbyAction = upcomingMatchId && props.game.pendingDerbyMatchAction?.matchId === upcomingMatchId
     ? props.game.pendingDerbyMatchAction.choice
     : undefined
-  const upcomingOpponentName = props.nextCompetition === 'friendly'
-    ? friendlyOpponent?.name ?? getTeamName(props.game, friendlyOpponentId)
-    : props.nextCompetition === 'polish-cup'
-    ? cupOpponentName
-    : props.nextCompetition === 'champions-cup'
-      ? championsCupOpponent?.name ?? getTeamName(props.game, championsCupOpponentId)
-    : props.nextCompetition === 'pmp-league'
-      ? pmpOpponent?.name ?? getTeamName(props.game, pmpMatchOpponentId)
-    : props.nextCompetition === 'promotion-playoff'
-      ? playoffOpponent?.name ?? ''
-    : props.nextMatch && !props.nextMatch.bye
-      ? getTeamName(props.game, props.opponentId)
-      : ''
-  const projectedSquadSize = props.game.squad.filter((player) =>
-    (player.contractSeasonsRemaining ?? 2) > 1 && player.age + 1 < 38,
-  ).length
-  const actionTasks: NextStep[] = []
-  const addActionTask = (task: NextStep) => {
-    if (actionTasks.length < 3) actionTasks.push(task)
-  }
-  if (props.game.sponsorRequired) {
-    addActionTask({
-      id: 'sponsor',
-      title: 'Wybierz sponsora',
-      description: 'Podpisz umowę, aby odblokować rozegranie kolejnego meczu.',
-      actionLabel: 'Przejdź do finansów',
-      icon: <Coins size={17} />,
-      onClick: () => props.onNavigate('finances'),
-    })
-  }
-  if (props.nextCompetition === 'season-complete') {
-    addActionTask(projectedSquadSize < 11
-      ? {
-        id: 'squad-shortage',
-        title: 'Uzupełnij kadrę przed nowym sezonem',
-        description: `Po odejściach pozostanie ${projectedSquadSize} zawodników. Do rozpoczęcia sezonu potrzeba co najmniej 11.`,
-        actionLabel: 'Przejdź na rynek transferowy',
-        icon: <Users size={17} />,
-        onClick: () => props.onNavigate('transfers'),
-      }
-      : {
-        id: 'new-season',
-        title: 'Rozpocznij kolejny sezon',
-        description: 'Zamknij sezon i poznaj cele zarządu na kolejne rozgrywki.',
-        actionLabel: 'Rozpocznij sezon',
-        icon: <Trophy size={17} />,
-        onClick: props.onStartSeason,
-      })
-  } else if (props.nextCompetition === 'polish-cup' && !props.nextCupMatch) {
-    addActionTask({
-      id: 'cup-bye',
-      title: 'Przejdź do następnego meczu',
-      description: 'Runda pucharowa bez udziału Twojego klubu i pozostałe mecze zostaną zasymulowane automatycznie.',
-      actionLabel: 'Symuluj kalendarz',
-      icon: <Trophy size={17} />,
-      onClick: props.onSimulateToNextMatch,
-    })
-  } else if (props.nextCompetition === 'pmp-league' && !props.nextPmpMatch) {
-    addActionTask({
-      id: 'pmp-league-round',
-      title: 'Trwa Liga PMP',
-      description: 'Mecze turnieju bez udziału Twojego klubu zostaną rozegrane automatycznie.',
-      actionLabel: 'Symuluj kalendarz',
-      icon: <Trophy size={17} />,
-      onClick: props.onSimulateToNextMatch,
-    })
-  } else if (props.nextMatch?.bye) {
-    addActionTask({
-      id: 'league-bye',
-      title: 'Przejdź do następnego meczu',
-      description: 'Pozostałe spotkania kolejki zostaną zasymulowane automatycznie, a kalendarz zatrzyma się przed Twoim meczem.',
-      actionLabel: 'Symuluj kalendarz',
-      icon: <CalendarDays size={17} />,
-      onClick: props.onSimulateToNextMatch,
-    })
-  } else {
-    addActionTask({
-      id: 'match-preparation',
-      title: props.recentMatches.length === 0 ? 'Rozegraj pierwszy mecz' : 'Rozegraj najbliższy mecz',
-      description: props.recentMatches.length === 0
-        ? `Sprawdź skład i taktykę${upcomingOpponentName ? ` przed meczem z ${upcomingOpponentName}` : ''}, a potem rozpocznij symulację.`
-        : `Następny rywal: ${upcomingOpponentName || 'Twój przeciwnik'}. Możesz zmienić skład i taktykę przed meczem.`,
-      actionLabel: 'Rozegraj mecz',
-      icon: <Activity size={17} />,
-      onClick: props.onPlay,
-    })
-  }
-  if (props.game.academyProspect) {
-    addActionTask({
-      id: 'academy-prospect',
-      title: 'Zdecyduj o nowym juniorze',
-      description: 'Akademia czeka na przyjęcie lub awans talentu do pierwszej drużyny.',
-      actionLabel: 'Otwórz akademię',
-      icon: <Star size={17} />,
-      onClick: () => props.onNavigate('academy'),
-    })
-  }
-  if (props.game.scouts.some((scout) => scout.prospect)) {
-    addActionTask({
-      id: 'scout-report',
-      title: 'Odbierz raport skauta',
-      description: 'Skaut znalazł zawodnika. Sprawdź raport i zdecyduj, czy zaprosić go do kadry.',
-      actionLabel: 'Otwórz skauting',
-      icon: <Compass size={17} />,
-      onClick: () => props.onNavigate('scouting'),
-    })
-  }
-  if (props.game.facilityConstruction) {
-    addActionTask({
-      id: 'facility-construction',
-      title: 'Sprawdź rozbudowę klubu',
-      description: 'Inwestycja jest w toku — zobacz postęp budowy i plan miasteczka klubowego.',
-      actionLabel: 'Otwórz stadion i teren',
-      icon: <Building2 size={17} />,
-      onClick: () => props.onNavigate('club'),
-    })
-  }
-  const claimableChallenges = getClubChallenges(props.game).filter((challenge) => challenge.completed && !challenge.claimed)
-  if (claimableChallenges.length > 0) {
-    addActionTask({
-      id: `club-challenges-${claimableChallenges.map((challenge) => challenge.id).join('-')}`,
-      title: 'Odbierz premię za wyzwania',
-      description: `Masz ${claimableChallenges.length} ukończonych celów meczowych do rozliczenia.`,
-      actionLabel: 'Otwórz wyzwania',
-      icon: <Trophy size={17} />,
-      onClick: () => props.onNavigate('board'),
-    })
-  }
-  if (props.game.boardGoal && props.game.cash < props.game.boardGoal.targetCash) {
-    addActionTask({
-      id: 'financial-goal',
-      title: 'Pilnuj celu finansowego',
-      description: `Zarząd oczekuje co najmniej ${formatMoney(props.game.boardGoal.targetCash)} na koniec sezonu.`,
-      actionLabel: 'Sprawdź finanse',
-      icon: <Wallet size={17} />,
-      onClick: () => props.onNavigate('finances'),
-    })
-  }
   const nextMatchDate = useMemo(() => props.nextCompetition === 'friendly' && props.nextFriendlyMatch?.scheduledAt
     ? parseLocalDateKey(props.nextFriendlyMatch.scheduledAt)
     : props.nextCompetition === 'polish-cup' && props.nextCupMatch
@@ -4652,7 +4484,6 @@ function OverviewPage(props: {
       tactic: `${tacticalStyleLabel} · ${tacticalPressureLabel}`,
     }
   }, [injuredPlayers, props.clubPosition, props.table.length, squadFormAverage, tacticalPressureLabel, tacticalStyleLabel])
-  const firstActionTask = actionTasks[0]
   const officialMatchesPlayed = [
     ...props.game.matches,
     ...(props.game.polishCup?.history ?? []),
@@ -4660,30 +4491,30 @@ function OverviewPage(props: {
   ].some((match) =>
     match.played && !match.bye && (match.homeId === props.game.teamId || match.awayId === props.game.teamId),
   )
-  const preseasonActive = (props.game.preseasonFriendlies?.length ?? 0) > 0 && props.game.round === 1 && !officialMatchesPlayed
-  useEffect(() => {
-    if (firstActionTask && !activeNextStep && !nextStepDismissed) {
-      onSelectAction(firstActionTask)
-    }
-  }, [firstActionTask, activeNextStep, nextStepDismissed, onSelectAction])
-
+  const preseasonActive = props.game.round === 1 && !officialMatchesPlayed
+  const lineupReady = props.game.matchLineupIds.length === 11
+  const sponsorReady = !props.game.sponsorRequired
+  const guideStep = !sponsorReady ? 1 : !lineupReady ? 2 : 3
   return <>
     {preseasonActive && <section className="panel-card preseason-panel">
       <div className="panel-heading">
-        <div><p className="eyebrow">PRZYGOTOWANIA DO SEZONU {props.game.season}</p><h2>Przygotuj klub do rozgrywek</h2></div>
+        <div><p className="eyebrow">PRZEWODNIK STARTU · KROK {guideStep} Z 3</p><h2>Pierwsze kroki przed meczem</h2></div>
       </div>
-      <p className="preseason-intro">Wykonaj poniższe kroki przed rozpoczęciem sezonu. Sparingi znajdziesz w kalendarzu. Umowa sponsorska jest wymagana przed pierwszym oficjalnym meczem, a prawa TV są opcjonalne.</p>
+      <p className="preseason-intro">Wykonaj te trzy kroki po kolei. Kliknij wybrany punkt, aby przejść dokładnie tam, gdzie możesz go zrobić.</p>
       <div className="preseason-checklist">
-        <button type="button" className={`preseason-task ${props.game.matchLineupIds.length === 11 ? 'preseason-task-ready' : ''}`} onClick={() => props.onNavigate('tactics')}>
-          <span><Users size={14} /></span><strong>1. Ustaw skład i taktykę</strong><small>{props.game.matchLineupIds.length === 11 ? 'Pierwsza jedenastka jest gotowa' : `${props.game.matchLineupIds.length} zawodników w pierwszej jedenastce`}</small><ArrowRight size={14} />
+        <button type="button" aria-current={guideStep === 1 ? 'step' : undefined} className={`preseason-task ${sponsorReady ? 'preseason-task-ready' : ''} ${guideStep === 1 ? 'preseason-task-current' : ''}`} onClick={props.onNavigateToSponsorOffers}>
+          <span>{sponsorReady ? <Check size={17} /> : '1'}</span><strong>Wybierz i podpisz umowę sponsorską</strong><small>{sponsorReady ? `Gotowe${props.game.sponsorDeal ? ` · ${props.game.sponsorDeal.company}` : ''}` : 'Wejdź w Finanse → Sponsorzy i kliknij „Podpisz na rundę” lub „Podpisz na sezon”.'}</small><ArrowRight size={15} />
         </button>
-        <button type="button" className={`preseason-task ${props.game.sponsorDeal ? 'preseason-task-ready' : ''}`} onClick={() => props.onNavigate('finances')}>
-          <span><Coins size={14} /></span><strong>2. Podpisz umowę sponsorską</strong><small>{props.game.sponsorDeal ? `Umowa podpisana · ${props.game.sponsorDeal.company}` : 'Wymagana przed pierwszym oficjalnym meczem'}</small><ArrowRight size={14} />
+        <button type="button" aria-current={guideStep === 2 ? 'step' : undefined} className={`preseason-task ${lineupReady ? 'preseason-task-ready' : ''} ${guideStep === 2 ? 'preseason-task-current' : ''}`} onClick={() => props.onNavigate('tactics')}>
+          <span>{lineupReady ? <Check size={17} /> : '2'}</span><strong>Ustaw skład i taktykę</strong><small>{lineupReady ? 'Gotowe — możesz wrócić i zmienić ustawienia' : `Wybierz 11 zawodników. Teraz w składzie: ${props.game.matchLineupIds.length}.`}</small><ArrowRight size={15} />
         </button>
-        <button type="button" className={`preseason-task ${props.game.tvDeal ? 'preseason-task-ready' : ''}`} onClick={() => props.onNavigate('finances')}>
-          <span><Tv size={14} /></span><strong>3. Prawa telewizyjne · opcjonalnie</strong><small>{props.game.tvDeal ? `Umowa podpisana · ${props.game.tvDeal.company}` : 'Możesz podpisać umowę w finansach'}</small><ArrowRight size={14} />
+        <button type="button" aria-current={guideStep === 3 ? 'step' : undefined} className={`preseason-task ${guideStep === 3 ? 'preseason-task-current' : ''}`} disabled={guideStep !== 3} onClick={props.onPlay}>
+          <span>{guideStep === 3 ? '3' : <Activity size={17} />}</span><strong>Rozegraj pierwszy mecz</strong><small>{guideStep === 3 ? 'Kliknij, aby przejść do następnego spotkania. Jeśli jest później w kalendarzu, gra doprowadzi Cię do jego terminu.' : 'Najpierw podpisz umowę sponsorską i ustaw jedenastkę.'}</small><ArrowRight size={15} />
         </button>
       </div>
+      <button type="button" className="preseason-optional-link" onClick={props.onNavigateToSponsorOffers}>
+        <Tv size={14} /> Prawa telewizyjne są opcjonalne — możesz podpisać je w finansach
+      </button>
     </section>}
     <section id="matchday-center-panel" className="matchday-center-panel">
       <div className="matchday-center-header">
@@ -8515,17 +8346,33 @@ function TransfersPage(props: {
   </>
 }
 
-function MailboxPage({ game, onUpdate, onNavigate, onNavigateToSponsorOffers }: {
+function MailboxPage({ game, onUpdate, onNavigate, onNavigateToSponsorOffers, autoOpenMessageId }: {
   game: GameState
   onUpdate: (game: GameState, message?: string) => void
   onNavigate: (section: Section) => void
   onNavigateToSponsorOffers: () => void
+  autoOpenMessageId: string | null
 }) {
   const messages = game.inboxMessages ?? []
-  const [selectedMessage, setSelectedMessage] = useState<InboxMessage | null>(null)
-  const [incomingOfferCounterAmount, setIncomingOfferCounterAmount] = useState('')
-  const [incomingContractWage, setIncomingContractWage] = useState('')
-  const [incomingContractSeasons, setIncomingContractSeasons] = useState('3')
+  const initialAutoOpenMessage = autoOpenMessageId
+    ? messages.find((message) => message.id === autoOpenMessageId) ?? null
+    : null
+  const initialAutoOpenOffer = initialAutoOpenMessage?.relatedTransferOfferId
+    ? game.incomingTransferOffers?.find((offer) => offer.id === initialAutoOpenMessage.relatedTransferOfferId)
+    : undefined
+  const initialAutoOpenPlayer = initialAutoOpenOffer
+    ? game.squad.find((player) => player.id === initialAutoOpenOffer.playerId)
+    : undefined
+  const [selectedMessage, setSelectedMessage] = useState<InboxMessage | null>(initialAutoOpenMessage)
+  const [incomingOfferCounterAmount, setIncomingOfferCounterAmount] = useState(
+    initialAutoOpenPlayer ? String(Math.round(initialAutoOpenPlayer.value * 1.15 / 1000) * 1000) : '',
+  )
+  const [incomingContractWage, setIncomingContractWage] = useState(
+    initialAutoOpenOffer?.playerWageDemand ? String(initialAutoOpenOffer.playerWageDemand) : '',
+  )
+  const [incomingContractSeasons, setIncomingContractSeasons] = useState(
+    String(initialAutoOpenOffer?.playerContractSeasons ?? 3),
+  )
   const selectedIncomingOffer = selectedMessage?.relatedTransferOfferId
     ? game.incomingTransferOffers?.find((offer) => offer.id === selectedMessage.relatedTransferOfferId)
     : undefined
@@ -8595,6 +8442,11 @@ function MailboxPage({ game, onUpdate, onNavigate, onNavigateToSponsorOffers }: 
     )
     onUpdate(next)
   }
+
+  const closeMessage = useCallback(() => {
+    setSelectedMessage(null)
+    onNavigate('overview')
+  }, [onNavigate])
 
   const respondToIncomingOffer = (response:
     | 'accept'
@@ -8684,11 +8536,11 @@ function MailboxPage({ game, onUpdate, onNavigate, onNavigateToSponsorOffers }: 
   useEffect(() => {
     if (!selectedMessage) return
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelectedMessage(null)
+      if (event.key === 'Escape') closeMessage()
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedMessage])
+  }, [selectedMessage, closeMessage])
 
   const statusLabels = {
     accepted: 'Oferta zaakceptowana',
@@ -8759,14 +8611,14 @@ function MailboxPage({ game, onUpdate, onNavigate, onNavigateToSponsorOffers }: 
           </div>
         </article>
       })}</div>}
-    {selectedMessage && <div className="matchday-preview-overlay" onClick={() => setSelectedMessage(null)}>
+    {selectedMessage && <div className="matchday-preview-overlay" onClick={closeMessage}>
       <section className={`matchday-preview mail-detail-preview ${selectedMessage.polishCupDraw || selectedMessage.polishCupResults ? 'cup-draw-preview' : ''}`} role="dialog" aria-modal="true" aria-labelledby="mail-detail-title" onClick={(event) => event.stopPropagation()}>
         <div className="matchday-preview-header">
           <div>
             <p className="eyebrow">{selectedMessage.polishCupDraw || selectedMessage.polishCupResults ? `POLSKI PUCHAR ${(selectedMessage.polishCupDraw ?? selectedMessage.polishCupResults)?.season ?? ''}` : selectedMessage.sender}</p>
             <h3 id="mail-detail-title">{selectedMessage.subject}</h3>
           </div>
-          <button type="button" className="close-button" onClick={() => setSelectedMessage(null)}>Zamknij</button>
+          <button type="button" className="close-button" onClick={closeMessage}>Wróć do centrum</button>
         </div>
         <div className="mail-detail-meta"><span>Od: {selectedMessage.sender}</span><time>{selectedMessage.date}</time></div>
         {selectedMessage.polishCupDraw || selectedMessage.polishCupResults
@@ -9167,9 +9019,14 @@ function getCommercialBrand(kind: 'sponsor' | 'tv', id: string, company: string)
   }
 }
 
-function FinancesPage({ game, onUpdate }: { game: GameState; onUpdate: (game: GameState, message?: string) => void }) {
+function FinancesPage({ game, onUpdate, onNavigate }: {
+  game: GameState
+  onUpdate: (game: GameState, message?: string) => void
+  onNavigate: (section: Section) => void
+}) {
   const totalWages = game.squad.reduce((sum, player) => sum + player.wage, 0)
   const staffWages = (game.staff ?? []).reduce((sum, member) => sum + member.wagePerRound, 0)
+  const scoutWages = game.scouts.reduce((sum, scout) => sum + scout.wagePerRound, 0)
   const academyWages = (game.academyPlayers ?? []).reduce((sum, player) => sum + player.wage, 0)
   const academyUpkeep = game.facilities.academy * 8_000 + academyWages
   const debt = game.debt ?? Math.max(0, -game.cash)
@@ -9178,6 +9035,12 @@ function FinancesPage({ game, onUpdate }: { game: GameState; onUpdate: (game: Ga
   const negative = game.finances.filter((entry) => entry.amount < 0).reduce((sum, entry) => sum + Math.abs(entry.amount), 0)
   const seasonRounds = getSeasonRoundCount(game)
   const halfSeasonRounds = Math.ceil(seasonRounds / 2)
+  const remainingRounds = Math.max(0, seasonRounds - game.round + 1)
+  const signedIncome = [game.sponsorDeal, game.tvDeal].reduce((total, deal) =>
+    total + (deal ? Math.min(remainingRounds, deal.roundsRemaining) * deal.paymentPerMatch : 0),
+  0)
+  const recurringCostsPerRound = totalWages + staffWages + scoutWages + academyUpkeep + stadiumUpkeep
+  const projectedSeasonEndBalance = game.cash + signedIncome - recurringCostsPerRound * remainingRounds
   function signDeal(kind: 'sponsor' | 'tv', offerId: string, duration = seasonRounds) {
     const result = signCommercialDeal(game, kind, offerId, duration)
     if (result.error) return onUpdate(game, result.error)
@@ -9186,6 +9049,7 @@ function FinancesPage({ game, onUpdate }: { game: GameState; onUpdate: (game: Ga
       : result.game.tvDeal
     const company = deal ? getCommercialBrand(kind, deal.id, deal.company).name : 'partnerem'
     onUpdate(result.game, `Podpisano umowę z ${company} na ${deal?.duration ?? duration} kolejek. Premia ${formatMoney(deal?.signingBonus ?? 0)} trafiła do budżetu.`)
+    if (kind === 'sponsor' && game.sponsorRequired) onNavigate('overview')
   }
   function renewSponsor() {
     const result = renewSponsorDeal(game)
@@ -9198,9 +9062,21 @@ function FinancesPage({ game, onUpdate }: { game: GameState; onUpdate: (game: Ga
   }
   return <>
     <div className="finance-highlight"><div className="finance-highlight-top"><span><Wallet size={17} /> SALDO KLUBU</span><span className={`finance-health ${debt > 0 ? 'finance-health-warning' : ''}`}><i /> {debt > 0 ? (debt >= 1_000_000 ? 'ZADŁUŻENIE · SANKCJE' : 'KLUB ZADŁUŻONY') : 'W DOBREJ KONDYCJI'}</span></div><strong>{formatMoney(game.cash)}</strong><p>Stan budżetu operacyjnego klubu</p><div className="finance-summary"><span><ArrowDownLeft size={14} /> Przychody w historii <strong>{formatMoney(positive)}</strong></span><span><ArrowUpRight size={14} /> Wydatki w historii <strong>{formatMoney(negative)}</strong></span><span><Wallet size={14} /> Dług klubu <strong>{formatMoney(debt)}</strong></span></div></div>
+    <section className={`finance-projection panel-card ${projectedSeasonEndBalance < 0 ? 'finance-projection-warning' : ''}`} aria-label="Prognoza finansów do końca sezonu">
+      <div className="panel-heading">
+        <div><p className="eyebrow">PLANOWANIE BUDŻETU</p><h2>Prognoza do końca sezonu</h2></div>
+        <span className={`finance-projection-result ${projectedSeasonEndBalance < 0 ? 'amount-negative' : 'amount-positive'}`}>{formatMoney(projectedSeasonEndBalance)}</span>
+      </div>
+      <p className="finance-description">Szacowane saldo po {remainingRounds} {remainingRounds === 1 ? 'kolejce' : 'kolejkach'} na podstawie obecnego budżetu, aktywnych umów i stałych kosztów.</p>
+      <div className="finance-projection-breakdown">
+        <span><small>WPŁYWY Z PODPISANYCH UMÓW</small><strong className="amount-positive">+{formatMoney(signedIncome)}</strong></span>
+        <span><small>STAŁE KOSZTY ({remainingRounds} {remainingRounds === 1 ? 'KOLEJKA' : 'KOLEJEK'})</small><strong className="amount-negative">−{formatMoney(recurringCostsPerRound * remainingRounds)}</strong></span>
+      </div>
+      <p className="finance-projection-note">Prognoza nie uwzględnia biletów, transferów, premii, nowych umów ani kosztów jednorazowych. Zakłada brak zmian w obecnej kadrze, sztabie i obiektach.</p>
+    </section>
     <div className="finance-grid">
       <section className="panel-card ticket-panel"><div className="panel-heading"><div><p className="eyebrow">PRZYCHODY MECZOWE</p><h2>Ceny biletów</h2></div><span className="finance-icon"><Coins size={18} /></span></div><p className="finance-description">Ustal cenę wejściówki. Wyższe ceny mogą ograniczyć frekwencję kibiców.</p><div className="ticket-price-value"><strong>{game.ticketPrice} zł</strong><span>za bilet</span></div><input className="ticket-slider" type="range" min="10" max="100" step="2" value={game.ticketPrice} onChange={(event) => onUpdate(setTicketPrice(game, Number(event.target.value)))} aria-label="Cena biletu" /><div className="slider-labels"><span>10 zł · komplet kibiców</span><span>100 zł · cena premium</span></div><div className="stadium-capacity"><span><Landmark size={15} /> Pojemność stadionu</span><strong>{game.stadiumCapacity.toLocaleString('pl-PL')} miejsc</strong></div><div className="capacity-meter"><span style={{ width: `${Math.max(38, Math.min(96, 83 - (game.ticketPrice - 28) * 0.8))}%` }} /></div><small className="attendance-hint">Szacowana frekwencja przy obecnej cenie biletu</small></section>
-      <section className="panel-card"><div className="panel-heading"><div><p className="eyebrow">KOSZTY KLUBU</p><h2>Stałe zobowiązania</h2></div><span className="finance-icon"><Banknote size={18} /></span></div><div className="cost-list"><div><span><span className="cost-dot cost-dot-red" /> Wynagrodzenia kadry</span><strong>{formatMoney(totalWages)} <small>/ kolejkę</small></strong></div><div><span><span className="cost-dot cost-dot-red" /> Wynagrodzenia sztabu</span><strong>{formatMoney(staffWages)} <small>/ kolejkę</small></strong></div><div><span><span className="cost-dot cost-dot-red" /> Akademia i juniorzy</span><strong>{formatMoney(academyUpkeep)} <small>/ kolejkę</small></strong></div><div><span><span className="cost-dot cost-dot-red" /> Utrzymanie stadionu</span><strong>{formatMoney(stadiumUpkeep)} <small>/ mecz</small></strong></div><div><span><span className="cost-dot" /> Zawodnicy w kadrze</span><strong>{game.squad.length} <small>os.</small></strong></div><div><span><span className="cost-dot cost-dot-blue" /> Cena biletu</span><strong>{game.ticketPrice} <small>zł</small></strong></div></div><div className="finance-tip"><Sparkles size={15} /><span>Utrzymuj równowagę między wynagrodzeniami, akademią i wynikami sportowymi.</span></div></section>
+      <section className="panel-card"><div className="panel-heading"><div><p className="eyebrow">KOSZTY KLUBU</p><h2>Stałe zobowiązania</h2></div><span className="finance-icon"><Banknote size={18} /></span></div><div className="cost-list"><div><span><span className="cost-dot cost-dot-red" /> Wynagrodzenia kadry</span><strong>{formatMoney(totalWages)} <small>/ kolejkę</small></strong></div><div><span><span className="cost-dot cost-dot-red" /> Wynagrodzenia sztabu</span><strong>{formatMoney(staffWages)} <small>/ kolejkę</small></strong></div><div><span><span className="cost-dot cost-dot-red" /> Wynagrodzenia skautów</span><strong>{formatMoney(scoutWages)} <small>/ kolejkę</small></strong></div><div><span><span className="cost-dot cost-dot-red" /> Akademia i juniorzy</span><strong>{formatMoney(academyUpkeep)} <small>/ kolejkę</small></strong></div><div><span><span className="cost-dot cost-dot-red" /> Utrzymanie stadionu</span><strong>{formatMoney(stadiumUpkeep)} <small>/ mecz</small></strong></div><div><span><span className="cost-dot" /> Zawodnicy w kadrze</span><strong>{game.squad.length} <small>os.</small></strong></div><div><span><span className="cost-dot cost-dot-blue" /> Cena biletu</span><strong>{game.ticketPrice} <small>zł</small></strong></div></div><div className="finance-tip"><Sparkles size={15} /><span>Utrzymuj równowagę między wynagrodzeniami, akademią i wynikami sportowymi.</span></div></section>
     </div>
     <section id="finance-sponsor-offers" className="panel-card commercial-panel">
       <div className="panel-heading"><div><p className="eyebrow">UMOWY KLUBOWE</p><h2>Sponsorzy i prawa TV</h2></div><span className="finance-icon"><Tv size={18} /></span></div>
