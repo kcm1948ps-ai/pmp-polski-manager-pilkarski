@@ -50,6 +50,14 @@ import {
 } from 'lucide-react'
 import { continueLiveMatchIncidents, type LiveMatchIncident } from './liveMatchPlayback.ts'
 import {
+  detachActiveClubDatabase,
+  getDatabaseLeagueClubs,
+  loadActiveClubDatabase,
+  parseClubDatabase,
+  saveActiveClubDatabase,
+  type ClubDatabase,
+} from './clubDatabase.ts'
+import {
   createGame,
   createGameSaveSnapshot,
   completeFacilityConstruction,
@@ -139,6 +147,7 @@ import {
   rejectClubTransferCounteroffer,
   respondToIncomingTransferOffer,
   renamePlayer,
+  renameCareerClub,
   renameOwnClub,
   renewPlayerContract,
   resolveSeasonEvent,
@@ -200,11 +209,56 @@ type CareerCustomization = {
   crestIdentity?: string
   playerNamesByShirtNumber: Record<string, { firstName: string; lastName: string }>
   playerIdsByShirtNumber: Record<string, string>
+  clubNameOverrides: Record<string, string>
+}
+
+const CAREER_CUSTOMIZATION_MOD_FORMAT = 'pmp27-career-customization-mod'
+
+type CareerCustomizationMod = {
+  format: typeof CAREER_CUSTOMIZATION_MOD_FORMAT
+  version: 1
+  modName: string
+  clubColor?: string
+  crestLibrary?: Record<string, string>
+  playerNamesByShirtNumber?: Record<string, { firstName: string; lastName: string }>
+  playerIdsByShirtNumber?: Record<string, string>
+  clubNameOverrides?: Record<string, string>
+}
+
+function buildCareerCustomizationMod(modName: string, customization: CareerCustomization): CareerCustomizationMod {
+  return {
+    format: CAREER_CUSTOMIZATION_MOD_FORMAT,
+    version: 1,
+    modName: modName.trim() || 'mod-klubow',
+    clubColor: customization.clubColor,
+    crestLibrary: readClubCrestLibrary(),
+    playerNamesByShirtNumber: customization.playerNamesByShirtNumber,
+    playerIdsByShirtNumber: customization.playerIdsByShirtNumber,
+    clubNameOverrides: customization.clubNameOverrides,
+  }
+}
+
+function applyCareerCustomizationMod(mod: CareerCustomizationMod) {
+  const current = readCareerCustomization()
+  const mergedLibrary = { ...readClubCrestLibrary(), ...(mod.crestLibrary ?? {}) }
+  if (!writeStorage(CLUB_CREST_LIBRARY_KEY, JSON.stringify(mergedLibrary))) {
+    throw new Error('Nie udało się zapisać biblioteki herbów z moda w pamięci przeglądarki.')
+  }
+  const nextCustomization: CareerCustomization = {
+    ...current,
+    clubColor: mod.clubColor ?? current.clubColor,
+    playerNamesByShirtNumber: { ...current.playerNamesByShirtNumber, ...(mod.playerNamesByShirtNumber ?? {}) },
+    playerIdsByShirtNumber: { ...current.playerIdsByShirtNumber, ...(mod.playerIdsByShirtNumber ?? {}) },
+    clubNameOverrides: { ...current.clubNameOverrides, ...(mod.clubNameOverrides ?? {}) },
+  }
+  if (!writeStorage(CAREER_CUSTOMIZATION_KEY, JSON.stringify(nextCustomization))) {
+    throw new Error('Nie udało się zapisać modyfikacji w pamięci przeglądarki.')
+  }
 }
 
 function readCareerCustomization(): CareerCustomization {
   const serialized = readStorage(CAREER_CUSTOMIZATION_KEY)
-  if (!serialized) return { clubName: '', clubColor: '#d8fa54', playerNamesByShirtNumber: {}, playerIdsByShirtNumber: {} }
+  if (!serialized) return { clubName: '', clubColor: '#d8fa54', playerNamesByShirtNumber: {}, playerIdsByShirtNumber: {}, clubNameOverrides: {} }
   let parsed: unknown
   try {
     parsed = JSON.parse(serialized)
@@ -225,6 +279,12 @@ function readCareerCustomization(): CareerCustomization {
         : []
     }))
     : {}
+  const savedClubNameOverrides = value.clubNameOverrides
+  const clubNameOverrides = savedClubNameOverrides && typeof savedClubNameOverrides === 'object' && !Array.isArray(savedClubNameOverrides)
+    ? Object.fromEntries(Object.entries(savedClubNameOverrides).filter((entry): entry is [string, string] =>
+      typeof entry[1] === 'string' && entry[1].trim().length >= 2 && entry[1].trim().length <= 36,
+    ))
+    : {}
   return {
     clubName: typeof value.clubName === 'string' ? value.clubName : '',
     clubColor: typeof value.clubColor === 'string' ? value.clubColor : '#d8fa54',
@@ -233,6 +293,7 @@ function readCareerCustomization(): CareerCustomization {
     playerIdsByShirtNumber: value.playerIdsByShirtNumber && typeof value.playerIdsByShirtNumber === 'object'
       ? Object.fromEntries(Object.entries(value.playerIdsByShirtNumber).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
       : {},
+    clubNameOverrides,
   }
 }
 
@@ -240,6 +301,14 @@ function applyCareerCustomization(game: GameState, customization: CareerCustomiz
   let next = structuredClone(game)
   if (customization.clubName && customization.clubName !== next.clubName) {
     const renamed = renameOwnClub(next, customization.clubName)
+    if (renamed.error) throw new Error(renamed.error)
+    next = renamed.game
+  }
+  for (const team of getCareerTeams(next)) {
+    const identity = team.customizationIdentity ?? getClubCrestIdentity(team)
+    const name = customization.clubNameOverrides[identity]
+    if (!name || name === team.name) continue
+    const renamed = renameCareerClub(next, team.id, name)
     if (renamed.error) throw new Error(renamed.error)
     next = renamed.game
   }
@@ -1016,6 +1085,7 @@ function getCareerTeams(game: GameState) {
     ...Object.values(game.leagueWorld ?? {}).flat(),
     ...(game.polishCup?.teams ?? []),
     ...(game.regionalCups?.flatMap((cup) => cup.teams) ?? []),
+    ...(game.pmpLeague?.teams ?? []),
   ]
   return [...new Map(teams.map((team) => [team.id, team])).values()]
 }
@@ -1252,7 +1322,7 @@ function ClubProfileModal({ game, teamId, onUpdate, onClose }: {
   onUpdate: (game: GameState, message?: string) => void
   onClose: () => void
 }) {
-  const [editedClubName, setEditedClubName] = useState(game.clubName)
+  const [editedClubName, setEditedClubName] = useState(teamId === game.teamId ? game.clubName : getTeamName(game, teamId))
   const [clubNameError, setClubNameError] = useState('')
   const [trophyCabinetExpanded, setTrophyCabinetExpanded] = useState(false)
   const [trophyFilter, setTrophyFilter] = useState<'all' | 'league' | 'cups'>('all')
@@ -1281,16 +1351,30 @@ function ClubProfileModal({ game, teamId, onUpdate, onClose }: {
     return groups
   }, new Map<string, typeof visibleTrophies>())
   const crestClass = crestImage ? 'club-crest-profile-preview club-crest-profile-image' : 'club-crest-profile-preview'
-  const teamCity = isOwnClub ? game.city : getClubCity(team.name)
+  const teamCity = isOwnClub ? game.city : getClubCity(team.customizationOriginalName ?? team.name)
   function saveClubName(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const result = renameOwnClub(game, editedClubName)
+    const result = renameCareerClub(game, teamId, editedClubName)
     if (result.error) {
       setClubNameError(result.error)
       return
     }
     setClubNameError('')
+    setEditedClubName(editedClubName.trim())
     onUpdate(result.game, `Zmieniono nazwę klubu na ${editedClubName.trim()}.`)
+  }
+
+  function restoreClubName() {
+    const originalName = team.customizationOriginalName
+    if (!originalName) return
+    const result = renameCareerClub(game, teamId, originalName)
+    if (result.error) {
+      setClubNameError(result.error)
+      return
+    }
+    setEditedClubName(originalName)
+    setClubNameError('')
+    onUpdate(result.game, `Przywrócono nazwę klubu ${originalName}.`)
   }
 
   return <div className="player-profile-overlay club-profile-overlay" onClick={onClose}>
@@ -1360,11 +1444,11 @@ function ClubProfileModal({ game, teamId, onUpdate, onClose }: {
         </div>
         <ClubCrestEditor game={game} teamId={teamId} onUpdate={onUpdate} />
       </section>
-      {isOwnClub && <section className="club-profile-crest-section">
+      <section className="club-profile-crest-section">
         <div>
           <p className="eyebrow">TOŻSAMOŚĆ KLUBU</p>
           <h3>Nazwa drużyny</h3>
-          <p>Zapamiętamy ją na tym urządzeniu i użyjemy również w kolejnych karierach.</p>
+          <p>Zmiana zapisze się w tej karierze i w przeglądarce do wykorzystania w kolejnych karierach.</p>
         </div>
         <form className="club-name-editor" onSubmit={saveClubName}>
           <input
@@ -1377,9 +1461,10 @@ function ClubProfileModal({ game, teamId, onUpdate, onClose }: {
             maxLength={36}
           />
           <button type="submit" className="club-crest-edit-button">Zapisz nazwę</button>
+          {team.customizationOriginalName && team.name !== team.customizationOriginalName && <button type="button" className="club-crest-reset-button" onClick={restoreClubName}>Przywróć oryginalną nazwę</button>}
           {clubNameError && <small className="image-upload-error" role="alert">{clubNameError}</small>}
         </form>
-      </section>}
+      </section>
       <p className="club-profile-storage-note">Herb jest zapisywany lokalnie na tym urządzeniu i będzie dostępny również w kolejnych karierach. Nie jest wysyłany na serwer. Obsługiwane formaty: JPG, PNG i WebP, maksymalnie 8 MB.</p>
     </section>
   </div>
@@ -1965,12 +2050,23 @@ function getSavedMusicVolume() {
 
 function App() {
   const [initialSave] = useState(getInitialSave)
+  const [initialClubDatabase] = useState(() => {
+    try {
+      return { database: loadActiveClubDatabase(), error: '' }
+    } catch (error) {
+      return {
+        database: undefined,
+        error: error instanceof Error ? error.message : 'Nie udało się wczytać bazy klubów.',
+      }
+    }
+  })
+  const [clubDatabase, setClubDatabase] = useState<ClubDatabase | undefined>(initialClubDatabase.database)
   const [careerCustomizationLoad] = useState(() => {
     try {
       return { customization: readCareerCustomization(), error: '' }
     } catch (error) {
       return {
-        customization: { clubName: '', clubColor: '#d8fa54', playerNamesByShirtNumber: {}, playerIdsByShirtNumber: {} },
+        customization: { clubName: '', clubColor: '#d8fa54', playerNamesByShirtNumber: {}, playerIdsByShirtNumber: {}, clubNameOverrides: {} },
         error: error instanceof Error ? error.message : 'Nie udało się odczytać personalizacji kariery.',
       }
     }
@@ -1993,11 +2089,13 @@ function App() {
   const [setupLeague, setSetupLeague] = useState<LeagueId>(defaultSetupLeague)
   const [setupRegion, setSetupRegion] = useState(getRegionsForLeague(defaultSetupLeague)[0] ?? 'fourth-mazowieckie')
   const [setupMode, setSetupMode] = useState<'custom' | 'existing'>('custom')
-  const [setupExistingClub, setSetupExistingClub] = useState(clubsByLeague[defaultSetupLeague][0])
+  const [setupExistingClub, setSetupExistingClub] = useState(
+    getDatabaseLeagueClubs(clubDatabase, defaultSetupLeague)?.[0]?.name ?? clubsByLeague[defaultSetupLeague][0],
+  )
   const [setupColor, setSetupColor] = useState(() => careerCustomization.clubColor)
   const [search, setSearch] = useState('')
   const [positionFilter, setPositionFilter] = useState<Position | 'all'>('all')
-  const [notice, setNotice] = useState(initialSave.error || careerCustomizationLoad.error)
+  const [notice, setNotice] = useState(initialSave.error || initialClubDatabase.error || careerCustomizationLoad.error)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [savingError, setSavingError] = useState('')
   const [activeSaveSlot, setActiveSaveSlot] = useState<typeof saveSlots[number]>(() => {
@@ -2421,7 +2519,10 @@ function App() {
 
     let customizationError = ''
     if (game) {
-      const updatedCustomization = { ...careerCustomization }
+      const updatedCustomization = {
+        ...careerCustomization,
+        clubNameOverrides: { ...careerCustomization.clubNameOverrides },
+      }
       let customizationChanged = false
       if (next.clubName !== game.clubName) {
         updatedCustomization.clubName = next.clubName
@@ -2447,6 +2548,16 @@ function App() {
       }
       if (next.clubColor !== game.clubColor) {
         updatedCustomization.clubColor = next.clubColor
+        customizationChanged = true
+      }
+      const nextTeamsById = new Map(getCareerTeams(next).map((team) => [team.id, team]))
+      for (const previousTeam of getCareerTeams(game)) {
+        const nextTeam = nextTeamsById.get(previousTeam.id)
+        if (!nextTeam || previousTeam.name === nextTeam.name) continue
+        const identity = previousTeam.customizationIdentity ?? getClubCrestIdentity(previousTeam)
+        const originalName = previousTeam.customizationOriginalName ?? previousTeam.name
+        if (nextTeam.name === originalName) delete updatedCustomization.clubNameOverrides[identity]
+        else updatedCustomization.clubNameOverrides[identity] = nextTeam.name
         customizationChanged = true
       }
       const nextOwnCrest = next.clubCrestDataUrl
@@ -2638,11 +2749,14 @@ function App() {
 
     const selectedClubName = setupMode === 'existing' ? setupExistingClub : trimmedName
     const clubName = setupMode === 'existing' ? selectedClubName : trimmedName
-    const city = setupMode === 'existing' ? getClubCity(setupExistingClub) : trimmedCity
+    const importedClub = setupMode === 'existing'
+      ? getDatabaseLeagueClubs(clubDatabase, setupLeague)?.find((club) => club.name === setupExistingClub)
+      : undefined
+    const city = setupMode === 'existing' ? importedClub?.city ?? getClubCity(setupExistingClub) : trimmedCity
     if (setupMode === 'custom') setSetupRegion(effectiveRegion)
     try {
       const baseGame = applyClubCrestLibrary(
-        createGame(selectedClubName, city, setupLeague, setupColor, setupMode, effectiveRegion),
+        createGame(selectedClubName, city, setupLeague, setupColor, setupMode, effectiveRegion, clubDatabase),
       )
       const nextCustomization = {
         ...careerCustomization,
@@ -3629,6 +3743,99 @@ function App() {
     }
   }
 
+  async function handleImportClubDatabase(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      if (file.type !== 'application/json' && !file.name.toLowerCase().endsWith('.json')) {
+        throw new Error('Dozwolony jest tylko plik JSON z bazą klubów.')
+      }
+      const availableLeagues = leagues.filter((league) => league.selectable !== false)
+      const allowedLeagueIds = availableLeagues.map((league) => league.id)
+      const expectedClubCounts = Object.fromEntries(allowedLeagueIds.map((id) => [id, clubsByLeague[id].length]))
+      const allowedRegions = Object.fromEntries(allowedLeagueIds.map((id) => [id, getRegionsForLeague(id)]))
+      const database = parseClubDatabase(
+        await file.text(),
+        allowedLeagueIds,
+        expectedClubCounts,
+        allowedRegions,
+      )
+      saveActiveClubDatabase(database)
+      setClubDatabase(database)
+      const currentLeague = database.leagues.find((league) => league.id === setupLeague)
+      const firstImportedLeague = currentLeague ?? database.leagues[0]
+      if (firstImportedLeague) {
+        setSetupLeague(firstImportedLeague.id)
+        setSetupExistingClub(firstImportedLeague.clubs[0]?.name ?? clubsByLeague[firstImportedLeague.id][0])
+      }
+      const clubCount = database.leagues.reduce((total, league) => total + league.clubs.length, 0)
+      const playerCount = database.leagues.reduce(
+        (total, league) => total + league.clubs.reduce((leagueTotal, club) => leagueTotal + club.players.length, 0),
+        0,
+      )
+      setNotice(`Wczytano bazę „${database.name}”: ${database.leagues.length} lig, ${clubCount} klubów i ${playerCount} zawodników. Będzie używana przy nowych karierach.`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Nie udało się wczytać bazy klubów.')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  function handleDetachClubDatabase() {
+    try {
+      detachActiveClubDatabase()
+      setClubDatabase(undefined)
+      setNotice('Odłączono bazę od nowych karier. Istniejące kariery zachowują przypisaną im bazę.')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Nie udało się odłączyć bazy klubów.')
+    }
+  }
+
+  async function handleImportCustomizationPack(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      if (file.type !== 'application/json' && !file.name.toLowerCase().endsWith('.json')) {
+        throw new Error('Dozwolony jest tylko plik JSON z pakietem modyfikacji.')
+      }
+      const raw = await file.text()
+      const parsed = JSON.parse(raw) as Partial<CareerCustomizationMod>
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Plik pakietu modyfikacji ma nieprawidłowy format.')
+      }
+      if (parsed.format !== CAREER_CUSTOMIZATION_MOD_FORMAT || parsed.version !== 1) {
+        throw new Error('Pakiet modyfikacji nie jest kompatybilny z tym formatem gry.')
+      }
+      applyCareerCustomizationMod(parsed as CareerCustomizationMod)
+      if (game) {
+        const currentCustomization = readCareerCustomization()
+        const nextGame = applyCareerCustomization(game, currentCustomization)
+        updateGame(nextGame, `Wczytano pakiet modyfikacji „${parsed.modName || 'mod-klubow'}”.`)
+      }
+      setNotice(`Wczytano pakiet modyfikacji „${parsed.modName || 'mod-klubow'}”.`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Nie udało się wczytać pakietu modyfikacji.')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  function handleExportCustomizationPack(modName: string) {
+    const name = modName.trim() || 'mod-klubow'
+    const customization = readCareerCustomization()
+    const payload = buildCareerCustomizationMod(name, customization)
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'mod-klubow'}-pack.json`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+    setNotice(`Pobrano pakiet modyfikacji „${name}” jako plik JSON.`)
+  }
+
   if (!game || !club) {
     return <SetupScreen
       name={setupName}
@@ -3639,10 +3846,17 @@ function App() {
       color={setupColor}
       mode={setupMode}
       existingClub={setupExistingClub}
+      clubOptions={(getDatabaseLeagueClubs(clubDatabase, setupLeague) ?? clubsByLeague[setupLeague].map((name) => ({ name, city: getClubCity(name) })))
+        .map((club) => ({ name: club.name, city: club.city }))}
+      clubDatabase={clubDatabase}
       notice={notice}
       savedCareers={savedCareers}
       onLoadCareer={handleSelectSaveSlot}
       onImportSave={handleImportSave}
+      onImportClubDatabase={handleImportClubDatabase}
+      onDetachClubDatabase={handleDetachClubDatabase}
+      onImportCustomizationPack={handleImportCustomizationPack}
+      onExportCustomizationPack={handleExportCustomizationPack}
       musicMuted={musicMuted}
       onToggleMusic={toggleMusic}
       setName={setSetupName}
@@ -3652,7 +3866,7 @@ function App() {
       }}
       setLeague={(value) => {
         setSetupLeague(value)
-        setSetupExistingClub(clubsByLeague[value][0])
+        setSetupExistingClub(getDatabaseLeagueClubs(clubDatabase, value)?.[0]?.name ?? clubsByLeague[value][0])
         setSetupRegion((currentRegion) => resolveSetupRegion(setupCity, value, currentRegion))
       }}
       setRegion={setSetupRegion}
@@ -3842,6 +4056,11 @@ function App() {
           musicVolume={musicVolume}
           onMusicEnabledChange={setMusicEnabled}
           onMusicVolumeChange={updateMusicVolume}
+          clubDatabase={clubDatabase}
+          onImportClubDatabase={handleImportClubDatabase}
+          onDetachClubDatabase={handleDetachClubDatabase}
+          onImportCustomizationPack={handleImportCustomizationPack}
+          onExportCustomizationPack={handleExportCustomizationPack}
         />}
         {isDeferredSection(section) && <Suspense fallback={<div className="panel-card empty-state" role="status">Wczytywanie sekcji…</div>}>
           <DeferredPages section={section} game={game} onUpdate={updateGame} />
@@ -3899,6 +4118,8 @@ function SetupScreen(props: {
   color: string
   mode: 'custom' | 'existing'
   existingClub: string
+  clubOptions: Array<{ name: string; city: string }>
+  clubDatabase?: ClubDatabase
   notice: string
   savedCareers: Array<{
     slotId: typeof saveSlots[number]
@@ -3909,7 +4130,12 @@ function SetupScreen(props: {
   }>
   onLoadCareer: (slotId: typeof saveSlots[number]) => void
   onImportSave: (event: React.ChangeEvent<HTMLInputElement>) => void
+  onImportClubDatabase: (event: React.ChangeEvent<HTMLInputElement>) => void
+  onDetachClubDatabase: () => void
+  onImportCustomizationPack: (event: React.ChangeEvent<HTMLInputElement>) => void
+  onExportCustomizationPack: (modName: string) => void
   musicMuted: boolean
+  musicVolume?: number
   onToggleMusic: () => void
   setName: (value: string) => void
   setCity: (value: string) => void
@@ -3922,13 +4148,15 @@ function SetupScreen(props: {
 }) {
   const colors = ['#d8fa54', '#ff744d', '#73b8ff', '#e98bdb', '#f1c65b']
   const [clubSearchQuery, setClubSearchQuery] = useState('')
+  const [startView, setStartView] = useState<'new' | 'load' | 'database' | 'settings'>('new')
+  const importInputRef = useRef<HTMLInputElement | null>(null)
+  const databaseInputRef = useRef<HTMLInputElement | null>(null)
   const regions: Array<{ id: string; name: string }> = props.regions.flatMap((id) => {
     const region = regionalOptions.find((option) => option.id === id)
     return region ? [{ id: region.id, name: region.name }] : []
   })
-  const clubOptions = clubsByLeague[props.league]
-  const filteredClubs = clubOptions.filter((club) =>
-    `${club} ${getClubCity(club)}`.toLocaleLowerCase('pl').includes(clubSearchQuery.trim().toLocaleLowerCase('pl')),
+  const filteredClubs = props.clubOptions.filter((club) =>
+    `${club.name} ${club.city}`.toLocaleLowerCase('pl').includes(clubSearchQuery.trim().toLocaleLowerCase('pl')),
   )
   const slogans = [
     {
@@ -3962,8 +4190,6 @@ function SetupScreen(props: {
   ]
   const [sloganIndex, setSloganIndex] = useState(0)
   const [sloganVisible, setSloganVisible] = useState(true)
-  const [startView, setStartView] = useState<'new' | 'load'>('new')
-  const importInputRef = useRef<HTMLInputElement | null>(null)
   const slogan = slogans[sloganIndex]
   const selectableLeagues = leagues.filter((league) => league.selectable !== false)
   const getLeagueDistrictName = (leagueName: string) => {
@@ -4013,9 +4239,23 @@ function SetupScreen(props: {
         <div className="setup-start-tabs" role="group" aria-label="Wybór na stronie głównej">
           <button type="button" aria-pressed={startView === 'new'} className={startView === 'new' ? 'setup-start-tab setup-start-tab-active' : 'setup-start-tab'} onClick={() => setStartView('new')}>Nowa kariera</button>
           <button type="button" aria-pressed={startView === 'load'} className={startView === 'load' ? 'setup-start-tab setup-start-tab-active' : 'setup-start-tab'} onClick={() => setStartView('load')}>Wczytaj karierę{props.savedCareers.length > 0 ? ` · ${props.savedCareers.length}` : ''}</button>
+          <button type="button" aria-pressed={startView === 'database'} className={startView === 'database' ? 'setup-start-tab setup-start-tab-active' : 'setup-start-tab'} onClick={() => setStartView('database')}>Baza klubów</button>
+          <button type="button" aria-pressed={startView === 'settings'} className={startView === 'settings' ? 'setup-start-tab setup-start-tab-active' : 'setup-start-tab'} onClick={() => setStartView('settings')}>Ustawienia</button>
         </div>
         {props.notice && <div className="setup-error">{props.notice}</div>}
-        {startView === 'load' ? <section className="setup-saved-careers" aria-label="Zapisane kariery">
+        {startView === 'settings'
+          ? <GameSettingsPage
+              musicMuted={props.musicMuted}
+              musicVolume={props.musicVolume ?? DEFAULT_GAME_MUSIC_VOLUME}
+              onMusicEnabledChange={props.onToggleMusic}
+              onMusicVolumeChange={() => {}}
+              clubDatabase={props.clubDatabase}
+              onImportClubDatabase={props.onImportClubDatabase}
+              onDetachClubDatabase={props.onDetachClubDatabase}
+              onImportCustomizationPack={props.onImportCustomizationPack}
+              onExportCustomizationPack={props.onExportCustomizationPack}
+            />
+          : startView === 'load' ? <section className="setup-saved-careers" aria-label="Zapisane kariery">
           <div className="setup-saved-careers-heading"><div><p className="eyebrow">WRÓĆ DO GRY</p><h3>Twoje kariery</h3></div><span>{props.savedCareers.length}</span></div>
           {props.savedCareers.length > 0
             ? <div className="setup-saved-career-list">{props.savedCareers.map((career) => <article className="setup-saved-career" key={career.slotId}>
@@ -4025,6 +4265,47 @@ function SetupScreen(props: {
             : <p className="setup-empty-saves">Nie ma jeszcze lokalnie zapisanych karier. Możesz wczytać zapis z pliku JSON.</p>}
           <input ref={importInputRef} type="file" accept="application/json,.json" hidden onChange={props.onImportSave} />
           <button type="button" className="setup-import-career" onClick={() => importInputRef.current?.click()}><ArrowUpRight size={15} /> Wczytaj karierę z pliku JSON</button>
+        </section> : startView === 'database' ? <section className="setup-database-panel" aria-label="Import bazy klubów">
+          <div className="setup-saved-careers-heading"><div><p className="eyebrow">WŁASNE DANE · JSON</p><h3>Baza klubów</h3></div><span><UsersRound size={13} /></span></div>
+          {props.clubDatabase
+            ? <div className="setup-database-status">
+              <strong>{props.clubDatabase.name}</strong>
+              <small>{props.clubDatabase.leagues.length} lig · {props.clubDatabase.leagues.reduce((total, league) => total + league.clubs.length, 0)} klubów · {props.clubDatabase.leagues.reduce((total, league) => total + league.clubs.reduce((sum, club) => sum + club.players.length, 0), 0)} zawodników</small>
+              <small>Aktywna przy zakładaniu nowych karier.</small>
+            </div>
+            : <p className="setup-empty-saves">Nie wczytano jeszcze własnej bazy. Importowane dane zastępują kluby, składy i herby w uwzględnionych ligach.</p>}
+          <p className="setup-database-help">Plik JSON v1: <code>format: pmp27-club-database</code>, <code>version: 1</code>, ligi z klubami, a w każdym klubie 11–40 zawodników. Każda dołączona liga musi mieć tyle klubów, ile obsługuje gra. Pozycje: BR, PO, ŚO, LO, DP, ŚP, OP, PP, LP, PN, LN, ŚN. Herby i portrety: obrazy PNG, JPEG lub WebP w Base64. Zapis kariery wymaga tej samej bazy na urządzeniu, na którym jest wczytywany.</p>
+          <details className="setup-database-format">
+            <summary>Przykład struktury pliku</summary>
+            <pre>{`{
+  "format": "pmp27-club-database",
+  "version": 1,
+  "name": "Moja baza",
+  "leagues": [{
+    "id": "ekstraklasa",
+    "clubs": [{
+      "id": "club-1",
+      "name": "Nazwa klubu",
+      "city": "Miasto",
+      "crestDataUrl": "data:image/png;base64,...",
+      "players": [{
+        "id": "player-1",
+        "firstName": "Jan",
+        "lastName": "Kowalski",
+        "age": 25,
+        "position": "ŚO",
+        "skill": 60,
+        "potential": 68,
+        "value": 500000,
+        "wage": 3500
+      }]
+    }]
+  }]
+}`}</pre>
+          </details>
+          <input ref={databaseInputRef} type="file" accept="application/json,.json" hidden onChange={props.onImportClubDatabase} />
+          <button type="button" className="setup-import-career" onClick={() => databaseInputRef.current?.click()}><ArrowUpRight size={15} /> {props.clubDatabase ? 'Wczytaj inną bazę JSON' : 'Wczytaj bazę z pliku JSON'}</button>
+          {props.clubDatabase && <button type="button" className="setup-database-detach" onClick={props.onDetachClubDatabase}>Odłącz od nowych karier</button>}
         </section> : <>
           <p className="eyebrow">NOWA KARIERA · 01 / 03</p>
           <h2>Załóż swój klub</h2>
@@ -4042,7 +4323,7 @@ function SetupScreen(props: {
               <label htmlFor="setup-club-search">Wybierz klub</label>
               <div className="setup-club-selected">
                 <span className="setup-club-selected-mark"><Shield size={16} /></span>
-                <span><strong>{props.existingClub}</strong><small><MapPin size={11} />{getClubCity(props.existingClub)}</small></span>
+                <span><strong>{props.existingClub}</strong><small><MapPin size={11} />{props.clubOptions.find((club) => club.name === props.existingClub)?.city ?? getClubCity(props.existingClub)}</small></span>
                 <Check size={15} />
               </div>
               <div className="setup-club-search">
@@ -4060,15 +4341,15 @@ function SetupScreen(props: {
               <div className="setup-club-results" role="listbox" aria-label="Kluby w wybranej lidze">
                 {filteredClubs.length > 0
                   ? filteredClubs.map((club) => <button
-                    key={club}
+                    key={club.name}
                     type="button"
                     role="option"
-                    aria-selected={club === props.existingClub}
-                    className={club === props.existingClub ? 'setup-club-result setup-club-result-selected' : 'setup-club-result'}
-                    onClick={() => props.setExistingClub(club)}
+                    aria-selected={club.name === props.existingClub}
+                    className={club.name === props.existingClub ? 'setup-club-result setup-club-result-selected' : 'setup-club-result'}
+                    onClick={() => props.setExistingClub(club.name)}
                   >
-                    <span><strong>{club}</strong><small><MapPin size={10} />{getClubCity(club)}</small></span>
-                    {club === props.existingClub && <Check size={14} />}
+                    <span><strong>{club.name}</strong><small><MapPin size={10} />{club.city}</small></span>
+                    {club.name === props.existingClub && <Check size={14} />}
                   </button>)
                   : <p className="setup-club-no-results">Nie znaleziono klubu pasującego do wyszukiwania.</p>}
               </div>
@@ -4091,13 +4372,20 @@ function SetupScreen(props: {
   </div>
 }
 
-function GameSettingsPage({ musicMuted, musicVolume, onMusicEnabledChange, onMusicVolumeChange }: {
+function GameSettingsPage({ musicMuted, musicVolume, onMusicEnabledChange, onMusicVolumeChange, clubDatabase, onImportClubDatabase, onDetachClubDatabase, onImportCustomizationPack, onExportCustomizationPack }: {
   musicMuted: boolean
   musicVolume: number
   onMusicEnabledChange: (enabled: boolean) => void
   onMusicVolumeChange: (volume: number) => void
+  clubDatabase?: ClubDatabase
+  onImportClubDatabase: (event: React.ChangeEvent<HTMLInputElement>) => void
+  onDetachClubDatabase: () => void
+  onImportCustomizationPack: (event: React.ChangeEvent<HTMLInputElement>) => void
+  onExportCustomizationPack: (modName: string) => void
 }) {
   const musicEnabled = !musicMuted
+  const databaseInputRef = useRef<HTMLInputElement | null>(null)
+  const customizationInputRef = useRef<HTMLInputElement | null>(null)
   return <section className="panel-card game-settings-panel">
     <div className="panel-heading">
       <div><p className="eyebrow">DŹWIĘK I ROZGRYWKA</p><h2>Ustawienia gry</h2></div>
@@ -4128,6 +4416,27 @@ function GameSettingsPage({ musicMuted, musicVolume, onMusicEnabledChange, onMus
         />
         <small>Zalecany poziom początkowy to 20%. Możesz dopasować go do własnych preferencji.</small>
       </label>
+    </div>
+    <div className="game-settings-group game-settings-database">
+      <div><strong>Baza klubów</strong><p>{clubDatabase
+        ? `${clubDatabase.name} · ${clubDatabase.leagues.length} lig, ${clubDatabase.leagues.reduce((total, league) => total + league.clubs.length, 0)} klubów`
+        : 'Nie wczytano dodatkowej bazy.'}</p></div>
+      <small>Zmiana bazy dotyczy nowych karier. Aktualna kariera zachowuje używaną bazę.</small>
+      <input ref={databaseInputRef} type="file" accept="application/json,.json" hidden onChange={onImportClubDatabase} />
+      <button type="button" className="setup-import-career" onClick={() => databaseInputRef.current?.click()}><ArrowUpRight size={15} /> Wczytaj bazę JSON</button>
+      {clubDatabase && <button type="button" className="setup-database-detach" onClick={onDetachClubDatabase}>Odłącz od nowych karier</button>}
+    </div>
+    <div className="game-settings-group game-settings-database">
+      <div><strong>Pakiet modyfikacji</strong><p>Eksportuj lub zaimportuj własne zmiany nazw klubów, herbów i nazwisk zawodników.</p></div>
+      <small>Plik zawiera tylko dane personalizacji, bez aktywnego zapisu kariery.</small>
+      <input ref={customizationInputRef} type="file" accept="application/json,.json" hidden onChange={onImportCustomizationPack} />
+      <div className="game-settings-actions">
+        <button type="button" className="setup-import-career" onClick={() => customizationInputRef.current?.click()}><ArrowUpRight size={15} /> Importuj pakiet</button>
+        <button type="button" className="setup-database-detach" onClick={() => {
+          const nextName = window.prompt('Nazwa moda:', 'mod-klubow')
+          if (nextName !== null) onExportCustomizationPack(nextName)
+        }}>Eksportuj pakiet</button>
+      </div>
     </div>
     <p className="game-settings-note"><Volume2 size={14} /> Ustawienia zapisywane są lokalnie w tej przeglądarce. Jeśli przeglądarka zablokuje autoodtwarzanie, muzyka rozpocznie się po pierwszej interakcji ze stroną.</p>
   </section>
@@ -4539,29 +4848,35 @@ function OverviewPage(props: {
     match.played && !match.bye && (match.homeId === props.game.teamId || match.awayId === props.game.teamId),
   )
   const preseasonActive = props.game.round === 1 && !officialMatchesPlayed
-  const lineupReady = props.game.matchLineupIds.length === 11
-  const sponsorReady = !props.game.sponsorRequired
-  const guideStep = !sponsorReady ? 1 : !lineupReady ? 2 : 3
+  const startGuideTasks = [
+    ...(props.game.sponsorRequired ? [{
+      id: 'sponsor',
+      title: 'Wybierz i podpisz umowę sponsorską',
+      description: 'Przed pierwszym meczem podpisz umowę na rundę lub na sezon.',
+    }] : []),
+    ...(!props.game.tvDeal ? [{
+      id: 'tv',
+      title: 'Podpisz umowę o prawa telewizyjne',
+      description: 'To opcjonalne źródło dodatkowych wpływów dla klubu.',
+    }] : []),
+  ]
   return <>
-    {preseasonActive && <section className="panel-card preseason-panel">
+    {preseasonActive && startGuideTasks.length > 0 && <section className="panel-card preseason-panel">
       <div className="panel-heading">
-        <div><p className="eyebrow">PRZEWODNIK STARTU · KROK {guideStep} Z 3</p><h2>Pierwsze kroki przed meczem</h2></div>
+        <div><p className="eyebrow">PRZEWODNIK STARTU · KROK 1 Z {startGuideTasks.length}</p><h2>Umowy przed sezonem</h2></div>
       </div>
-      <p className="preseason-intro">Wykonaj te trzy kroki po kolei. Kliknij wybrany punkt, aby przejść dokładnie tam, gdzie możesz go zrobić.</p>
+      <p className="preseason-intro">Podpisz umowę sponsorską przed pierwszym meczem. Prawa telewizyjne są opcjonalne i zapewniają dodatkowe wpływy.</p>
       <div className="preseason-checklist">
-        <button type="button" aria-current={guideStep === 1 ? 'step' : undefined} className={`preseason-task ${sponsorReady ? 'preseason-task-ready' : ''} ${guideStep === 1 ? 'preseason-task-current' : ''}`} onClick={props.onNavigateToSponsorOffers}>
-          <span>{sponsorReady ? <Check size={17} /> : '1'}</span><strong>Wybierz i podpisz umowę sponsorską</strong><small>{sponsorReady ? `Gotowe${props.game.sponsorDeal ? ` · ${props.game.sponsorDeal.company}` : ''}` : 'Wejdź w Finanse → Sponsorzy i kliknij „Podpisz na rundę” lub „Podpisz na sezon”.'}</small><ArrowRight size={15} />
-        </button>
-        <button type="button" aria-current={guideStep === 2 ? 'step' : undefined} className={`preseason-task ${lineupReady ? 'preseason-task-ready' : ''} ${guideStep === 2 ? 'preseason-task-current' : ''}`} onClick={() => props.onNavigate('tactics')}>
-          <span>{lineupReady ? <Check size={17} /> : '2'}</span><strong>Ustaw skład i taktykę</strong><small>{lineupReady ? 'Gotowe — możesz wrócić i zmienić ustawienia' : `Wybierz 11 zawodników. Teraz w składzie: ${props.game.matchLineupIds.length}.`}</small><ArrowRight size={15} />
-        </button>
-        <button type="button" aria-current={guideStep === 3 ? 'step' : undefined} className={`preseason-task ${guideStep === 3 ? 'preseason-task-current' : ''}`} disabled={guideStep !== 3} onClick={props.onPlay}>
-          <span>{guideStep === 3 ? '3' : <Activity size={17} />}</span><strong>Rozegraj pierwszy mecz</strong><small>{guideStep === 3 ? 'Kliknij, aby przejść do następnego spotkania. Jeśli jest później w kalendarzu, gra doprowadzi Cię do jego terminu.' : 'Najpierw podpisz umowę sponsorską i ustaw jedenastkę.'}</small><ArrowRight size={15} />
-        </button>
+        {startGuideTasks.map((task, index) => <button
+          key={task.id}
+          type="button"
+          aria-current={index === 0 ? 'step' : undefined}
+          className={`preseason-task ${index === 0 ? 'preseason-task-current' : ''}`}
+          onClick={props.onNavigateToSponsorOffers}
+        >
+          <span>{index + 1}</span><strong>{task.title}</strong><small>{task.description}</small><ArrowRight size={15} />
+        </button>)}
       </div>
-      <button type="button" className="preseason-optional-link" onClick={props.onNavigateToSponsorOffers}>
-        <Tv size={14} /> Prawa telewizyjne są opcjonalne — możesz podpisać je w finansach
-      </button>
     </section>}
     <section id="matchday-center-panel" className="matchday-center-panel">
       <div className="matchday-center-header">
@@ -5762,8 +6077,8 @@ function MatchStatisticsPage({ id, playback, onBack }: { id?: string; playback: 
         </div>
       </div>
     </section>
-    {playback.finalGame.lastMatchReport && <TacticalReport report={playback.finalGame.lastMatchReport} />}
     <button className="primary-button match-statistics-back" onClick={onBack}>Wróć do klubu <ArrowRight size={14} /></button>
+    {playback.finalGame.lastMatchReport && <TacticalReport report={playback.finalGame.lastMatchReport} />}
   </section>
 }
 
@@ -7463,6 +7778,7 @@ function CalendarPage({
       cup.matches.forEach((match) => {
         if (match.bye || (match.homeId !== game.teamId && match.awayId !== game.teamId)) return
         const schedule = getCupFixtureSchedule(game, match, undefined, cupRounds.length)
+        if (cup.drawAt && getLocalDateKey(schedule.date) <= cup.drawAt) return
         fixtures.push({
           match,
           date: schedule.date,
@@ -9099,7 +9415,7 @@ function FinancesPage({ game, onUpdate, onNavigate }: {
       : result.game.tvDeal
     const company = deal ? getCommercialBrand(kind, deal.id, deal.company).name : 'partnerem'
     onUpdate(result.game, `Podpisano umowę z ${company} na ${deal?.duration ?? duration} kolejek. Premia ${formatMoney(deal?.signingBonus ?? 0)} trafiła do budżetu.`)
-    if (kind === 'sponsor' && game.sponsorRequired) onNavigate('overview')
+    if (kind === 'tv' || (kind === 'sponsor' && game.sponsorRequired)) onNavigate('overview')
   }
   function renewSponsor() {
     const result = renewSponsorDeal(game)

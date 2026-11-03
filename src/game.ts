@@ -4,6 +4,16 @@ import { lubuskieLeagueGroups } from './lubuskieLeagueData.ts'
 import { opolskieLeagueGroups } from './opolskieLeagueData.ts'
 import { createId } from './id.ts'
 import {
+  findImportedClubByName,
+  findImportedClubByTeamId,
+  getDatabaseLeagueClubs,
+  getStoredClubDatabase,
+  normalizeClubNameKey,
+  type ClubDatabase,
+  type ClubDatabaseClub,
+  type ClubDatabasePlayer,
+} from './clubDatabase.ts'
+import {
   getLeagueRoundDate,
   getLocalDateKey,
   getPolishCupDrawDate,
@@ -69,6 +79,13 @@ export function matchLineupRating(game: GameState, lineupIds = game.matchLineupI
     return sum + (player.skill + moraleAdjustment + personalityAdjustment + chemistryAdjustment) * multiplier
   }, 0)
   return Math.round(total / lineup.length) + (matchId ? getMatchConferenceBonus(game, matchId) : 0)
+}
+
+function getClubCustomizationIdentity(name: string, regionId?: string) {
+  const normalizedName = normalizeClubNameKey(name)
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+  return `${normalizedName}|${regionId ?? ''}`
 }
 
 export type CompetitionDiscipline = {
@@ -295,6 +312,8 @@ function addPlayerHistory(player: Player, event: PlayerHistoryEvent) {
 export type Team = {
   id: string
   name: string
+  customizationIdentity?: string
+  customizationOriginalName?: string
   regionId?: string
   strength: number
   played: number
@@ -351,6 +370,8 @@ export type PolishCupStage = 'regional' | 'third' | 'second' | 'first' | 'ekstra
 export type PolishCupTeam = {
   id: string
   name: string
+  customizationIdentity?: string
+  customizationOriginalName?: string
   strength: number
   leagueId: LeagueId
   regionId?: string
@@ -808,6 +829,7 @@ export type ClubChallenge = {
 
 export type GameState = {
   version: 1
+  clubDatabaseId?: string
   clubName: string
   clubType: 'custom' | 'existing'
   city: string
@@ -1482,7 +1504,7 @@ export function prepareTransferMarketLeague(game: GameState, leagueId: string) {
   const next = { ...game, clubSquads: retainedClubSquads }
   next.clubSquads = {
     ...retainedClubSquads,
-    ...createClubSquads(missingTeams, next.teamId, {}, game.season),
+    ...createClubSquads(missingTeams, next.teamId, {}, game.season, getStoredClubDatabase(game.clubDatabaseId)),
   }
   ensureUniqueGamePlayerNames(next)
   return { game: next, error: '' }
@@ -3140,18 +3162,21 @@ function addPolishCupDrawAnnouncement(state: GameState) {
 export function publishPolishCupDrawIfDue(game: GameState, currentDate: string) {
   const cup = game.polishCup
   if (!cup || cup.stage === 'complete' || !cup.drawAt || cup.drawAt !== currentDate) return null
-  const fixtures = cup.matches.filter((match) => !match.bye).map((match) => ({
-    date: match.scheduledAt ?? cup.drawAt as string,
+  const subject = `Wyniki losowania Polskiego Pucharu · ${cup.drawAt}`
+  if (game.inboxMessages?.some((message) => message.subject === subject)) return null
+  const next = structuredClone(game)
+  const nextCup = next.polishCup
+  if (!nextCup) return null
+  ensureCupMatchesAfterDraw(nextCup)
+  const fixtures = nextCup.matches.filter((match) => !match.bye).map((match) => ({
+    date: match.scheduledAt ?? nextCup.drawAt as string,
     kickoffTime: match.kickoffTime ?? '20:00',
     homeId: match.homeId,
     awayId: match.awayId,
     poolId: match.poolId,
   }))
   if (!fixtures.length) return null
-  const subject = `Wyniki losowania Polskiego Pucharu · ${cup.drawAt}`
-  if (game.inboxMessages?.some((message) => message.subject === subject)) return null
-  const next = structuredClone(game)
-  const stageLabel = getPolishCupStageLabel(cup)
+  const stageLabel = getPolishCupStageLabel(nextCup)
   const userPoolId = Object.entries(cup.regionalPools).find(([, teamIds]) => teamIds.includes(game.teamId))?.[0]
   const groups = [...new Set(fixtures.flatMap((fixture) => fixture.poolId ? [fixture.poolId] : []))]
     .map((poolId) => regionalOptions.find((region) => region.id === poolId)?.name ?? poolId)
@@ -3171,9 +3196,9 @@ export function publishPolishCupDrawIfDue(game: GameState, currentDate: string) 
     undefined,
     {
       drawDate: cup.drawAt,
-      season: cup.season,
+      season: nextCup.season,
       stage: stageLabel,
-      regionalRound: cup.stage === 'regional' ? cup.regionalRound : undefined,
+      regionalRound: nextCup.stage === 'regional' ? nextCup.regionalRound : undefined,
       groups,
       userParticipates,
       userGroup,
@@ -3181,6 +3206,22 @@ export function publishPolishCupDrawIfDue(game: GameState, currentDate: string) 
     },
   )
   return next
+}
+
+function ensureCupMatchesAfterDraw(cup: PolishCup) {
+  const drawAt = cup.drawAt
+  if (!drawAt) return
+  let nextDate = parseLocalDateKey(drawAt)
+  nextDate.setDate(nextDate.getDate() + 1)
+  while (![2, 3, 4].includes(nextDate.getDay()) || isPolishPublicHoliday(nextDate)) {
+    nextDate.setDate(nextDate.getDate() + 1)
+  }
+  const nextDateKey = getLocalDateKey(nextDate)
+  cup.matches.forEach((match) => {
+    if (match.played || match.bye || (match.scheduledAt && match.scheduledAt > drawAt)) return
+    match.scheduledAt = nextDateKey
+    match.kickoffTime ??= '20:00'
+  })
 }
 
 function addPolishCupResultsMessage(state: GameState, cup: PolishCup, matches: PolishCupMatch[]) {
@@ -3438,14 +3479,35 @@ function makeStableClubPlayer(team: Team, index: number, season: string) {
   return player
 }
 
+function makeImportedClubPlayer(club: ClubDatabaseClub, source: ClubDatabasePlayer, index: number, season: string) {
+  const player = makePlayer(index, source.skill, source.age, source.position)
+  const potential = source.potential ?? Math.max(source.skill, Math.min(92, source.skill + 5))
+  player.id = `database-player-${club.id}-${source.id}`
+  player.firstName = source.firstName
+  player.lastName = source.lastName
+  player.portraitDataUrl = source.portraitDataUrl
+  player.potential = potential
+  player.value = source.value ?? playerValue(source.skill, potential, source.age)
+  player.wage = source.wage ?? Math.round(source.skill * source.skill * 0.7 / 100) * 100
+  addPlayerHistory(player, {
+    season,
+    type: 'club',
+    title: club.name,
+    details: 'Rozpoczyna sezon w klubie.',
+  })
+  return player
+}
+
 function createClubSquads(
   teams: Team[],
   teamId: string,
   previousSquads: Record<string, ClubPlayerOffer[]> = {},
   season = '2026/2027',
+  database?: ClubDatabase,
 ): Record<string, ClubPlayerOffer[]> {
   return Object.fromEntries(teams.filter((team) => team.id !== teamId).map((team) => {
     const existingOffers = previousSquads[team.id]
+    const importedClub = findImportedClubByTeamId(database, team.id)
     const players = existingOffers
       ? existingOffers.flatMap(({ player }) => {
         const nextPlayer = { ...player }
@@ -3467,7 +3529,12 @@ function createClubSquads(
         }
         return [{ player: nextPlayer, askingPrice: 0 }]
       })
-      : []
+      : importedClub
+        ? importedClub.players.map((source, index) => ({
+          player: makeImportedClubPlayer(importedClub, source, index, season),
+          askingPrice: 0,
+        }))
+        : []
     while (players.length < positions.length) {
       const positionCounts = new Map<Position, number>()
       for (const position of positions) {
@@ -3517,7 +3584,7 @@ function ensureClubSquadsForCupTeams(game: GameState, teamIds: string[], cupTeam
   if (missingTeams.length) {
     game.clubSquads = {
       ...game.clubSquads,
-      ...createClubSquads(missingTeams, game.teamId, {}, game.season),
+      ...createClubSquads(missingTeams, game.teamId, {}, game.season, getStoredClubDatabase(game.clubDatabaseId)),
     }
     ensureUniqueGamePlayerNames(game)
   }
@@ -3920,6 +3987,8 @@ function emptyTeam(id: string, name: string, strength: number): Team {
   return {
     id,
     name,
+    customizationIdentity: getClubCustomizationIdentity(name),
+    customizationOriginalName: name,
     strength,
     played: 0,
     wins: 0,
@@ -3931,6 +4000,22 @@ function emptyTeam(id: string, name: string, strength: number): Team {
     yellowCards: 0,
     redCards: 0,
     fairPlayPoints: 0,
+  }
+}
+
+function getImportedClubStrength(club: ClubDatabaseClub) {
+  return Math.round(club.players.reduce((total, player) => total + player.skill, 0) / club.players.length)
+}
+
+function createImportedTeam(club: ClubDatabaseClub, leagueId: LeagueId) {
+  const regionId = club.regionId ?? resolveClubRegion(club.name, leagueId, club.city)
+  if (!getRegionsForLeague(leagueId).includes(regionId)) {
+    throw new Error(`Klub ${club.name} ma nieprawidłowy region dla ligi ${leagueId}.`)
+  }
+  return {
+    ...emptyTeam(`database-team-${club.id}`, club.name, getImportedClubStrength(club)),
+    regionId,
+    customizationIdentity: getClubCustomizationIdentity(club.name, regionId),
   }
 }
 
@@ -3956,26 +4041,36 @@ function getLeagueIds() {
   return Object.keys(clubsByLeague).filter((id) => id !== 'third' && id !== 'fourth') as LeagueId[]
 }
 
-function createLeagueWorld(leagueId: LeagueId, currentTeams: Team[]) {
+function createLeagueWorld(leagueId: LeagueId, currentTeams: Team[], database?: ClubDatabase) {
   const world: Record<string, Team[]> = {}
   for (const id of getLeagueIds()) {
     if (id === leagueId) {
       world[id] = currentTeams.map((team) => ({
         ...team,
         regionId: team.regionId ?? resolveClubRegion(team.name, id),
+        customizationIdentity: team.customizationIdentity ?? getClubCustomizationIdentity(team.name, team.regionId ?? resolveClubRegion(team.name, id)),
+        customizationOriginalName: team.customizationOriginalName ?? team.name,
       }))
+      continue
+    }
+    const importedClubs = getDatabaseLeagueClubs(database, id)
+    if (importedClubs) {
+      world[id] = importedClubs.map((club) => createImportedTeam(club, id))
       continue
     }
     const clubs = clubsByLeague[id]
     world[id] = clubs.map((name, index) => ({
       ...emptyTeam(`world-${id}-${index}`, name, getLeagueBaseStrength(id) - 4 + Math.floor(Math.random() * 9)),
       regionId: resolveClubRegion(name, id),
+      customizationIdentity: getClubCustomizationIdentity(name, resolveClubRegion(name, id)),
     }))
   }
   if (!world[leagueId]) {
     world[leagueId] = currentTeams.map((team) => ({
       ...team,
       regionId: team.regionId ?? resolveClubRegion(team.name, leagueId),
+      customizationIdentity: team.customizationIdentity ?? getClubCustomizationIdentity(team.name, team.regionId ?? resolveClubRegion(team.name, leagueId)),
+      customizationOriginalName: team.customizationOriginalName ?? team.name,
     }))
   }
   return world
@@ -4678,7 +4773,7 @@ function createPmpKnockoutMatches(
 }
 
 function createPmpLeague(game: GameState): PmpLeague {
-  const world = game.leagueWorld ?? createLeagueWorld(game.leagueId, game.teams)
+  const world = game.leagueWorld ?? createLeagueWorld(game.leagueId, game.teams, getStoredClubDatabase(game.clubDatabaseId))
   world[game.leagueId] = game.teams.map((team) => ({ ...team }))
   const teamsById = new Map<string, PolishCupTeam>()
   const groups: PmpLeagueGroup[] = []
@@ -4698,6 +4793,8 @@ function createPmpLeague(game: GameState): PmpLeague {
       teamsById.set(team.id, {
         id: team.id,
         name: team.name,
+        customizationIdentity: team.customizationIdentity ?? getClubCustomizationIdentity(team.name, team.regionId),
+        customizationOriginalName: team.customizationOriginalName ?? team.name,
         strength: team.id === game.teamId ? overallRating(game.squad) : team.strength,
         leagueId: leagueId as LeagueId,
         regionId,
@@ -4783,12 +4880,14 @@ function initializePmpLeagueIfReady(game: GameState) {
 }
 
 function makePolishCup(game: GameState): PolishCup {
-  const world = game.leagueWorld ?? createLeagueWorld(game.leagueId, game.teams)
+  const world = game.leagueWorld ?? createLeagueWorld(game.leagueId, game.teams, getStoredClubDatabase(game.clubDatabaseId))
   world[game.leagueId] = game.teams.map((team) => ({ ...team }))
   const teams = Object.entries(world).flatMap(([leagueId, leagueTeams]) =>
     leagueTeams.map((team) => ({
       id: team.id,
       name: team.name,
+      customizationIdentity: team.customizationIdentity ?? getClubCustomizationIdentity(team.name, team.regionId),
+      customizationOriginalName: team.customizationOriginalName ?? team.name,
       strength: team.id === game.teamId ? overallRating(game.squad) : team.strength,
       leagueId: leagueId as LeagueId,
       regionId: team.regionId,
@@ -4800,6 +4899,8 @@ function makePolishCup(game: GameState): PolishCup {
     teams.push({
       id: club.id,
       name: club.name,
+      customizationIdentity: club.customizationIdentity ?? getClubCustomizationIdentity(club.name, club.regionId),
+      customizationOriginalName: club.customizationOriginalName ?? club.name,
       strength: overallRating(game.squad),
       leagueId: game.leagueId,
       regionId: club.regionId,
@@ -4958,7 +5059,7 @@ function nextWeekdayAfter(date: Date, weekday: number) {
 }
 
 function createPromotionPlayoffSchedule(game: GameState): PromotionPlayoffs {
-  const world = game.leagueWorld ?? createLeagueWorld(game.leagueId, game.teams)
+  const world = game.leagueWorld ?? createLeagueWorld(game.leagueId, game.teams, getStoredClubDatabase(game.clubDatabaseId))
   world[game.leagueId] = game.teams.map((team) => ({ ...team }))
   simulateLeagueWorldToSeasonEnd(world, game.leagueId)
   game.leagueWorld = world
@@ -5253,8 +5354,10 @@ export function getNextScheduledCompetition(game: GameState): 'league' | 'polish
       getSeasonRoundCount(game),
       getGameMatchupsPerOpponent(game),
     ))
+  const currentDate = game.currentDate ?? `${game.season.split('/')[0]}-07-01`
+  const cupDrawPending = Boolean(game.polishCup?.drawAt && currentDate < game.polishCup.drawAt)
   const pendingCupMatches = [
-    ...(game.polishCup?.stage === 'complete' ? [] : game.polishCup?.matches ?? []),
+    ...(game.polishCup?.stage === 'complete' || cupDrawPending ? [] : game.polishCup?.matches ?? []),
     ...(game.regionalCups ?? []).flatMap((cup) => cup.matches),
   ]
     .filter((match) => !match.played)
@@ -8195,7 +8298,7 @@ function applySeasonPromotions(
 }
 
 function finishLeagueWorldSeason(game: GameState) {
-  const world = game.leagueWorld ?? createLeagueWorld(game.leagueId, game.teams)
+  const world = game.leagueWorld ?? createLeagueWorld(game.leagueId, game.teams, getStoredClubDatabase(game.clubDatabaseId))
   world[game.leagueId] = game.teams.map((team) => ({ ...team }))
   if (!game.promotionPlayoffs?.leagueWorldFinalized) {
     simulateLeagueWorldToSeasonEnd(world, game.leagueId)
@@ -8293,7 +8396,7 @@ function simulateLeagueWorldToSeasonEnd(world: Record<string, Team[]>, currentLe
 }
 
 function advanceLeagueWorld(game: GameState) {
-  const world = game.leagueWorld ?? createLeagueWorld(game.leagueId, game.teams)
+  const world = game.leagueWorld ?? createLeagueWorld(game.leagueId, game.teams, getStoredClubDatabase(game.clubDatabaseId))
   world[game.leagueId] = game.teams.map((team) => ({ ...team }))
   const currentDate = game.currentDate
     ?? getLocalDateKey(getLeagueRoundDate(
@@ -9096,35 +9199,59 @@ function getPreseasonStartDate(game: GameState) {
   return getLocalDateKey(date)
 }
 
-export function createGame(clubName: string, city: string, leagueId: LeagueId, clubColor: string, clubType: 'custom' | 'existing' = 'custom', customRegionId?: string): GameState {
+export function createGame(
+  clubName: string,
+  city: string,
+  leagueId: LeagueId,
+  clubColor: string,
+  clubType: 'custom' | 'existing' = 'custom',
+  customRegionId?: string,
+  database?: ClubDatabase,
+): GameState {
   const teamId = 'your-club'
+  const trimmedClubName = clubName.trim()
+  const selectedImportedClub = findImportedClubByName(database, leagueId, trimmedClubName)
   const clubRegionId = clubType === 'existing'
-    ? resolveClubRegion(clubName.trim(), leagueId, city.trim())
-    : customRegionId ?? resolveClubRegion(clubName.trim(), leagueId, city.trim())
+    ? selectedImportedClub?.regionId ?? resolveClubRegion(trimmedClubName, leagueId, city.trim())
+    : customRegionId ?? resolveClubRegion(trimmedClubName, leagueId, city.trim())
   if (clubType === 'custom' && !getRegionsForLeague(leagueId).includes(clubRegionId)) {
     throw new Error('Region własnego klubu nie pasuje do wybranej grupy rozgrywkowej.')
   }
-  const clubs = clubsByLeague[leagueId]
-  const otherTeams = (clubType === 'existing' ? clubs.filter((name) => name !== clubName) : clubs.slice(0, -1))
-    .map((name, index) => ({
-    id: `team-${index}`,
-    name,
-    regionId: resolveClubRegion(name, leagueId),
-    strength: getLeagueBaseStrength(leagueId) - 4 + Math.floor(Math.random() * 9),
-    played: 0,
-    wins: 0,
-    draws: 0,
-    losses: 0,
-    goalsFor: 0,
-    goalsAgainst: 0,
-    points: 0,
-  }))
+  if (clubType === 'existing' && !getRegionsForLeague(leagueId).includes(clubRegionId)) {
+    throw new Error(`Region klubu ${clubName} nie pasuje do wybranej grupy rozgrywkowej.`)
+  }
+  const importedLeagueClubs = getDatabaseLeagueClubs(database, leagueId)
+  const clubs = importedLeagueClubs?.map((club) => club.name) ?? clubsByLeague[leagueId]
+  const otherTeams = importedLeagueClubs
+    ? (clubType === 'existing'
+      ? importedLeagueClubs.filter((club) => normalizeClubNameKey(club.name) !== normalizeClubNameKey(trimmedClubName))
+      : importedLeagueClubs.slice(0, -1)).map((club) => createImportedTeam(club, leagueId))
+    : (clubType === 'existing' ? clubs.filter((name) => normalizeClubNameKey(name) !== normalizeClubNameKey(trimmedClubName)) : clubs.slice(0, -1))
+      .map((name, index) => ({
+        id: `team-${index}`,
+        name,
+        regionId: resolveClubRegion(name, leagueId),
+        customizationIdentity: getClubCustomizationIdentity(name, resolveClubRegion(name, leagueId)),
+        customizationOriginalName: name,
+        strength: getLeagueBaseStrength(leagueId) - 4 + Math.floor(Math.random() * 9),
+        played: 0,
+        wins: 0,
+        draws: 0,
+        losses: 0,
+        goalsFor: 0,
+        goalsAgainst: 0,
+        points: 0,
+      }))
   const leagueStrength = getLeagueBaseStrength(leagueId)
   const club: Team = {
     id: teamId,
-    name: clubName.trim(),
+    name: trimmedClubName,
     regionId: clubRegionId,
-    strength: clubType === 'existing' ? leagueStrength + Math.floor(Math.random() * 8) : leagueStrength - 2,
+    customizationIdentity: getClubCustomizationIdentity(trimmedClubName, clubRegionId),
+    customizationOriginalName: trimmedClubName,
+    strength: selectedImportedClub
+      ? getImportedClubStrength(selectedImportedClub)
+      : clubType === 'existing' ? leagueStrength + Math.floor(Math.random() * 8) : leagueStrength - 2,
     played: 0,
     wins: 0,
     draws: 0,
@@ -9134,15 +9261,22 @@ export function createGame(clubName: string, city: string, leagueId: LeagueId, c
     points: 0,
   }
   const teams = [club, ...otherTeams]
-  if (clubType === 'existing' && !clubs.includes(clubName)) {
+  if (clubType === 'existing' && !clubs.some((name) => normalizeClubNameKey(name) === normalizeClubNameKey(trimmedClubName))) {
     throw new Error(`Klub ${clubName} nie należy do wybranej grupy rozgrywkowej.`)
   }
   if (teams.length !== clubs.length) throw new Error(`Nieprawidłowa liczba klubów w grupie ${leagueId}: ${teams.length}.`)
-  const squad = assignMissingSquadNumbers(positions.map((position, index) => {
-    const minSkill = leagueStrength - 12
-    const skill = minSkill + Math.floor(Math.random() * (clubType === 'existing' ? 20 : 24))
-    return makePlayer(index, skill, 18 + Math.floor(Math.random() * 17), position)
-  }))
+  const squad = assignMissingSquadNumbers(selectedImportedClub
+    ? selectedImportedClub.players.map((source, index) => makeImportedClubPlayer(selectedImportedClub, source, index, '2026/2027'))
+    : positions.map((position, index) => {
+      const minSkill = leagueStrength - 12
+      const skill = minSkill + Math.floor(Math.random() * (clubType === 'existing' ? 20 : 24))
+      return makePlayer(index, skill, 18 + Math.floor(Math.random() * 17), position)
+    }))
+  const clubCrestsByTeamId: Record<string, string> = {}
+  for (const databaseClub of database?.leagues.flatMap((league) => league.clubs) ?? []) {
+    if (databaseClub.crestDataUrl) clubCrestsByTeamId[`database-team-${databaseClub.id}`] = databaseClub.crestDataUrl
+  }
+  if (selectedImportedClub?.crestDataUrl) clubCrestsByTeamId[teamId] = selectedImportedClub.crestDataUrl
   const startingIds: string[] = []
   for (const position of formationPositions) {
     const player = squad
@@ -9161,12 +9295,15 @@ export function createGame(clubName: string, city: string, leagueId: LeagueId, c
     .map((player) => player.id)
   const game: GameState = {
     version: 1,
-    clubName: clubName.trim(),
+    clubName: trimmedClubName,
     clubType,
     city: city.trim() || 'Polska',
     leagueId,
-    leagueWorld: createLeagueWorld(leagueId, teams),
+    clubDatabaseId: database?.id,
+    leagueWorld: createLeagueWorld(leagueId, teams, database),
     clubColor,
+    clubCrestDataUrl: selectedImportedClub?.crestDataUrl,
+    clubCrestsByTeamId,
     cash: clubType === 'existing'
       ? [0, 12_000_000, 6_000_000, 3_000_000, 1_200_000, 400_000, 250_000, 175_000, 120_000][getLeagueTier(leagueId)]
       : [0, 4_500_000, 2_500_000, 1_200_000, 600_000, 300_000, 220_000, 150_000, 100_000][getLeagueTier(leagueId)],
@@ -9184,7 +9321,7 @@ export function createGame(clubName: string, city: string, leagueId: LeagueId, c
     teamId,
     teams,
     squad,
-    clubSquads: createClubSquads(teams, teamId, {}, '2026/2027'),
+    clubSquads: createClubSquads(teams, teamId, {}, '2026/2027', database),
     transferNegotiations: [],
     incomingTransferOffers: [],
     outgoingPlayerTransferListings: [],
@@ -10119,23 +10256,47 @@ export function renamePlayer(game: GameState, playerId: string, firstName: strin
   return { game: next, error: '' }
 }
 
-export function renameOwnClub(game: GameState, name: string) {
+export function renameCareerClub(game: GameState, teamId: string, name: string) {
   const trimmedName = name.trim()
   if (trimmedName.length < 2 || trimmedName.length > 36) {
     return { game, error: 'Nazwa klubu musi mieć od 2 do 36 znaków.' }
   }
   const next = structuredClone(game)
-  next.clubName = trimmedName
-  const renameTeam = (teams: Array<{ id: string; name: string }> | undefined) => {
-    teams?.forEach((team) => {
-      if (team.id === next.teamId) team.name = trimmedName
+  const teams = [
+    ...next.teams,
+    ...Object.values(next.leagueWorld ?? {}).flat(),
+    ...(next.polishCup?.teams ?? []),
+    ...(next.regionalCups?.flatMap((cup) => cup.teams) ?? []),
+    ...(next.pmpLeague?.teams ?? []),
+  ]
+  const target = teams.find((team) => team.id === teamId)
+  if (!target) return { game, error: 'Nie znaleziono klubu w tej karierze.' }
+  const identity = target.customizationIdentity ?? getClubCustomizationIdentity(target.name, target.regionId)
+  const originalName = target.customizationOriginalName ?? target.name
+  const renameTeam = (entries: Array<{
+    id: string
+    name: string
+    customizationIdentity?: string
+    customizationOriginalName?: string
+  }> | undefined) => {
+    entries?.forEach((team) => {
+      if (team.id !== teamId) return
+      team.name = trimmedName
+      team.customizationIdentity ??= identity
+      team.customizationOriginalName ??= originalName
     })
   }
   renameTeam(next.teams)
   Object.values(next.leagueWorld ?? {}).forEach(renameTeam)
   renameTeam(next.polishCup?.teams)
   next.regionalCups?.forEach((cup) => renameTeam(cup.teams))
+  renameTeam(next.pmpLeague?.teams)
+  if (teamId === next.teamId) next.clubName = trimmedName
   return { game: next, error: '' }
+}
+
+export function renameOwnClub(game: GameState, name: string) {
+  return renameCareerClub(game, game.teamId, name)
 }
 
 export function getPlayerContractDemand(player: Player) {
@@ -12309,7 +12470,7 @@ export function startNewSeason(game: GameState) {
     : `${next.season} · nowy sezon`
   next.clubSquads = {
     ...next.clubSquads,
-    ...createClubSquads(next.teams, next.teamId, next.clubSquads, next.season),
+    ...createClubSquads(next.teams, next.teamId, next.clubSquads, next.season, getStoredClubDatabase(next.clubDatabaseId)),
   }
   Object.values(next.clubSquads).forEach((offers) => offers.forEach(({ player }) => {
     player.seasonAppearances = 0
@@ -12543,6 +12704,9 @@ export function loadGameFromJSON(rawSave: string): GameState | null {
   if (parsed.version !== 1 || !parsed.clubName || !Array.isArray(parsed.teams) || !Array.isArray(parsed.squad) || !Array.isArray(parsed.matches)) {
     throw new Error('Zapis gry jest nieprawidłowy. Utwórz nową karierę, aby kontynuować.')
   }
+  if (parsed.clubDatabaseId && !getStoredClubDatabase(parsed.clubDatabaseId)) {
+    throw new Error('Zapis wymaga zaimportowanej bazy klubów, której nie ma w tej przeglądarce.')
+  }
   const renameClub = (name: string) => clubNameReplacements[name] ?? name
   const renameLeague = (name: string) =>
     name === '2. Liga' || name === 'Betclic 2. Liga' ? 'Druga Liga Polska' : name
@@ -12581,7 +12745,7 @@ export function loadGameFromJSON(rawSave: string): GameState | null {
       })
     }
   }
-  const currentWorld = createLeagueWorld(parsed.leagueId, parsed.teams)
+  const currentWorld = createLeagueWorld(parsed.leagueId, parsed.teams, getStoredClubDatabase(parsed.clubDatabaseId))
   const completedLeagueRound = Math.max(0, Math.min(getSeasonRoundCount(parsed), parsed.round - 1))
   const fallbackCurrentDate = completedLeagueRound > 0
     ? getLocalDateKey(getLeagueRoundDate(
@@ -12619,6 +12783,7 @@ export function loadGameFromJSON(rawSave: string): GameState | null {
   })
   parsed.leagueWorld[parsed.leagueId] = parsed.teams.map((team) => ({ ...team }))
   parsed.polishCup ??= makePolishCup(parsed)
+  ensureCupMatchesAfterDraw(parsed.polishCup)
   rescheduleUnplayedCupMatches(
     parsed.polishCup.matches,
     parsed.polishCup.season,
@@ -12764,7 +12929,7 @@ export function loadGameFromJSON(rawSave: string): GameState | null {
   if (missingLeagueSquads.length) {
     parsed.clubSquads = {
       ...parsed.clubSquads,
-      ...createClubSquads(missingLeagueSquads, parsed.teamId, {}, parsed.season),
+      ...createClubSquads(missingLeagueSquads, parsed.teamId, {}, parsed.season, getStoredClubDatabase(parsed.clubDatabaseId)),
     }
   }
   for (const negotiation of parsed.transferNegotiations.slice(0, 10)) {

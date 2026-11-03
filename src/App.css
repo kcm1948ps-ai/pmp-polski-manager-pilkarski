@@ -650,6 +650,10 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .game-settings-panel { max-width: 760px; }
 .settings-heading-icon { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #3b4937; border-radius: 8px; background: #242e21; color: #c6df83; }
 .game-settings-group { display: grid; gap: 0; overflow: hidden; border: 1px solid #303a31; border-radius: 8px; background: #141a16; }
+.game-settings-database { gap: 8px; margin-top: 12px; padding: 14px; }
+.game-settings-database > div { display: grid; gap: 5px; }
+.game-settings-database strong { color: #e1e9df; font-size: 10px; }
+.game-settings-database p, .game-settings-database > small { margin: 0; color: #89958a; font-size: 8px; line-height: 1.55; }
 .game-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px; }
 .game-setting-row > div { display: grid; gap: 5px; }
 .game-setting-row strong, .game-setting-volume strong { color: #e1e9df; font-size: 10px; }
@@ -1889,7 +1893,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .setup-footer i { margin: 0 4px; color: #a3b276; font-style: normal; }
 .setup-right { display: grid; place-items: center; padding: 35px; border-left: 1px solid #2b342c; background: #131814; }
 .setup-form-wrap { width: min(100%, 390px); }
-.setup-start-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-bottom: 20px; padding: 4px; border: 1px solid #303a31; border-radius: 6px; background: #101511; }
+.setup-start-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-bottom: 20px; padding: 4px; border: 1px solid #303a31; border-radius: 6px; background: #101511; }
 .setup-start-tab { min-height: 34px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #a4afa3; font-size: 9px; font-weight: 700; }
 .setup-start-tab:hover { color: #e2e8e0; }
 .setup-start-tab-active { border-color: #53643d; background: #26321f; color: #d9e8b3; }
@@ -1912,6 +1916,16 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .setup-empty-saves { margin: 0 0 12px; color: #9ba69c; font-size: 9px; line-height: 1.6; }
 .setup-import-career { display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 36px; margin-top: 10px; border: 1px solid #435339; border-radius: 5px; background: #1d261b; color: #d9e8b3; font-size: 9px; font-weight: 700; }
 .setup-import-career:hover { border-color: #9ab75a; color: var(--lime); }
+.setup-database-panel { margin: 0 0 17px; padding: 12px; border: 1px solid #435339; border-radius: 7px; background: linear-gradient(135deg, #202a1e, #171d19); }
+.setup-database-status { display: grid; gap: 5px; margin: 10px 0; padding: 9px; border: 1px solid #303a31; border-radius: 5px; background: #141a16; }
+.setup-database-status strong { color: #e2e8de; font-size: 10px; }
+.setup-database-status small, .setup-database-help { color: #9ba69c; font-size: 8px; line-height: 1.6; }
+.setup-database-help { margin: 10px 0 0; }
+.setup-database-help code { color: #d9e8b3; }
+.setup-database-format { margin-top: 10px; color: #c7d0c4; font-size: 8px; }
+.setup-database-format summary { cursor: pointer; color: #d9e8b3; font-weight: 700; }
+.setup-database-format pre { max-height: 150px; overflow: auto; margin: 8px 0 0; padding: 8px; border: 1px solid #303a31; border-radius: 4px; background: #111612; color: #b8c5b3; font: 7px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.setup-database-detach { display: block; margin: 9px auto 0; border: 0; background: transparent; color: #a4afa3; font-size: 8px; text-decoration: underline; }
 .setup-form { display: grid; gap: 15px; }
 .setup-mode-picker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .setup-mode-option { position: relative; min-height: 61px; display: flex; align-items: center; gap: 9px; padding: 9px; border: 1px solid #343e36; border-radius: 6px; background: #191f1a; text-align: left; }

@@ -12,6 +12,10 @@ after(() => vite.close())
 
 const {
   createGame,
+  renameCareerClub,
+  clubsByLeague,
+  leagues,
+  getRegionsForLeague,
   estimateAttendance,
   getDerbyKind,
   getClubChallenges,
@@ -28,6 +32,7 @@ const {
   getManagerCareerProfile,
   loadGameFromJSON,
   getNextScheduledCompetition,
+  publishPolishCupDrawIfDue,
   getTransferWindowInfo,
   recordClubRivalryMatch,
   playChampionsCupMatch,
@@ -49,11 +54,125 @@ const {
   simulateCalendarDay,
   startNewSeason,
 } = await vite.ssrLoadModule('/src/game.ts')
+const {
+  parseClubDatabase,
+  saveActiveClubDatabase,
+  findImportedClubByName,
+} = await vite.ssrLoadModule('/src/clubDatabase.ts')
 const { continueLiveMatchIncidents } = await vite.ssrLoadModule('/src/liveMatchPlayback.ts')
 
 const initialGame = createGame('Testowy Klub', 'Warszawa', 'ekstraklasa', '#123456')
 const opponentTeams = initialGame.teams.filter((team) => team.id !== initialGame.teamId)
 const [firstOpponent, secondOpponent, thirdOpponent] = opponentTeams
+
+test('renaming a rival club updates every competition and keeps its original identity', () => {
+  const game = createGame('Testowy Klub', 'Warszawa', 'fourth-mazowieckie', '#123456')
+  const target = game.teams.find((team) => team.id !== game.teamId)
+  assert.ok(target)
+  const originalIdentity = target.customizationIdentity
+  const originalName = target.name
+  const renamed = renameCareerClub(game, target.id, 'Nowa nazwa klubu')
+  assert.equal(renamed.error, '')
+  assert.equal(renamed.game.teams.find((team) => team.id === target.id)?.name, 'Nowa nazwa klubu')
+  assert.equal(renamed.game.leagueWorld[game.leagueId].find((team) => team.id === target.id)?.name, 'Nowa nazwa klubu')
+  assert.equal(renamed.game.polishCup.teams.find((team) => team.id === target.id)?.name, 'Nowa nazwa klubu')
+  assert.equal(renamed.game.regionalCups.some((cup) => cup.teams.some((team) => team.id === target.id && team.name === 'Nowa nazwa klubu')), true)
+  assert.equal(renamed.game.teams.find((team) => team.id === target.id)?.customizationIdentity, originalIdentity)
+  assert.equal(renamed.game.teams.find((team) => team.id === target.id)?.customizationOriginalName, originalName)
+  assert.equal(renameCareerClub(renamed.game, target.id, originalName).game.teams.find((team) => team.id === target.id)?.name, originalName)
+})
+
+test('imported club lookup normalizes names, accents and repeated spaces', () => {
+  const packageData = {
+    format: 'pmp27-club-database',
+    version: 1,
+    name: 'Testowa baza',
+    leagues: [{
+      id: 'ekstraklasa',
+      clubs: [{
+        id: 'club-1',
+        name: 'ŁKS Łódź',
+        city: 'Łódź',
+        crestDataUrl: 'data:image/png;base64,AA==',
+        players: Array.from({ length: 11 }, (__, playerIndex) => ({
+          id: `player-${playerIndex}`,
+          firstName: `Zawodnik${playerIndex}`,
+          lastName: 'Test',
+          age: 24,
+          position: ['BR', 'PO', 'ŚO', 'LO', 'DP', 'ŚP', 'OP', 'PP', 'LP', 'PN', 'LN'][playerIndex],
+          skill: 60,
+          potential: 70,
+        })),
+      }],
+    }],
+  }
+  const database = parseClubDatabase(
+    JSON.stringify(packageData),
+    ['ekstraklasa'],
+    { ekstraklasa: 1 },
+    { ekstraklasa: getRegionsForLeague('ekstraklasa') },
+  )
+  const found = findImportedClubByName(database, 'ekstraklasa', '  lks    lodz  ')
+  assert.equal(found?.name, 'ŁKS Łódź')
+})
+
+test('imported club database supplies club names, rosters and crests to new careers', () => {
+  const packageData = {
+    format: 'pmp27-club-database',
+    version: 1,
+    name: 'Testowa baza',
+    leagues: [{
+      id: 'ekstraklasa',
+      clubs: clubsByLeague.ekstraklasa.map((_, clubIndex) => ({
+        id: `club-${clubIndex}`,
+        name: `Importowany klub ${clubIndex}`,
+        city: `Miasto ${clubIndex}`,
+        crestDataUrl: 'data:image/png;base64,AA==',
+        players: Array.from({ length: 11 }, (__, playerIndex) => ({
+          id: `player-${playerIndex}`,
+          firstName: `Zawodnik${playerIndex}`,
+          lastName: `Test${clubIndex}`,
+          age: 24,
+          position: ['BR', 'PO', 'ŚO', 'LO', 'DP', 'ŚP', 'OP', 'PP', 'LP', 'PN', 'LN'][playerIndex],
+          skill: 60,
+          potential: 70,
+        })),
+      })),
+    }],
+  }
+  const availableLeagues = leagues.filter((league) => league.selectable !== false)
+  const database = parseClubDatabase(
+    JSON.stringify(packageData),
+    availableLeagues.map((league) => league.id),
+    Object.fromEntries(availableLeagues.map((league) => [league.id, clubsByLeague[league.id].length])),
+    Object.fromEntries(availableLeagues.map((league) => [league.id, getRegionsForLeague(league.id)])),
+  )
+  const originalStorage = globalThis.localStorage
+  const storedValues = new Map()
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key) => storedValues.get(key) ?? null,
+      setItem: (key, value) => storedValues.set(key, String(value)),
+      removeItem: (key) => storedValues.delete(key),
+    },
+  })
+  try {
+    saveActiveClubDatabase(database)
+    const game = createGame('Importowany klub 0', 'Miasto 0', 'ekstraklasa', '#123456', 'existing', undefined, database)
+    assert.equal(game.clubDatabaseId, database.id)
+    assert.equal(game.teams[0].name, 'Importowany klub 0')
+    assert.equal(game.squad[0].firstName, 'Zawodnik0')
+    assert.equal(game.clubCrestDataUrl, 'data:image/png;base64,AA==')
+    assert.equal(game.clubSquads['database-team-club-1'][0].player.lastName, 'Test1')
+    const restored = loadGameFromJSON(JSON.stringify(game))
+    assert.equal(restored?.clubDatabaseId, database.id)
+    assert.equal(restored?.clubCrestsByTeamId?.['database-team-club-1'], 'data:image/png;base64,AA==')
+  } finally {
+    if (originalStorage === undefined) delete globalThis.localStorage
+    else Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: originalStorage })
+  }
+})
 
 function createCompetitionGame() {
   const game = structuredClone(initialGame)
@@ -94,6 +213,34 @@ test('calendar advances one day at a time and rejects skipped dates', () => {
   const skippedDay = simulateCalendarDay(game, skippedDate)
   assert.notEqual(skippedDay.error, '')
   assert.equal(skippedDay.game, game)
+})
+
+test('Polish Cup fixtures are not simulated on or before their draw date', () => {
+  const game = createCompetitionGame()
+  game.round = getSeasonRoundCount(game) + 1
+  game.currentDate = '2026-06-14'
+  game.polishCup.stage = 'third'
+  game.polishCup.scheduleStage = 'central-preliminary'
+  game.polishCup.drawAt = '2026-06-15'
+  game.polishCup.matches = [{
+    id: 'test-polish-cup-draw-date',
+    stage: 'third',
+    round: 1,
+    scheduledAt: '2026-06-15',
+    homeId: game.teamId,
+    awayId: firstOpponent.id,
+    played: false,
+    competitionId: 'polish-cup',
+  }]
+
+  assert.notEqual(getNextScheduledCompetition(game), 'polish-cup')
+
+  const published = publishPolishCupDrawIfDue(game, game.polishCup.drawAt)
+  assert.ok(published)
+  assert.equal(published.polishCup.matches[0].scheduledAt, '2026-06-16')
+  assert.equal(published.inboxMessages.at(-1).polishCupDraw.fixtures[0].date, '2026-06-16')
+  published.currentDate = '2026-06-15'
+  assert.equal(getNextScheduledCompetition(published), 'polish-cup')
 })
 
 test('regional Polish Cup includes lower-league clubs in their regional bracket', () => {
