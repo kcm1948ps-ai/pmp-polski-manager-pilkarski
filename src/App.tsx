@@ -3921,10 +3921,15 @@ function SetupScreen(props: {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
 }) {
   const colors = ['#d8fa54', '#ff744d', '#73b8ff', '#e98bdb', '#f1c65b']
+  const [clubSearchQuery, setClubSearchQuery] = useState('')
   const regions: Array<{ id: string; name: string }> = props.regions.flatMap((id) => {
     const region = regionalOptions.find((option) => option.id === id)
     return region ? [{ id: region.id, name: region.name }] : []
   })
+  const clubOptions = clubsByLeague[props.league]
+  const filteredClubs = clubOptions.filter((club) =>
+    `${club} ${getClubCity(club)}`.toLocaleLowerCase('pl').includes(clubSearchQuery.trim().toLocaleLowerCase('pl')),
+  )
   const slogans = [
     {
       eyebrow: 'TWOJA HISTORIA ZACZYNA SIĘ TUTAJ',
@@ -4033,8 +4038,46 @@ function SetupScreen(props: {
               <label>Nazwa klubu<input value={props.name} onChange={(event) => props.setName(event.target.value)} placeholder="np. KS Błyskawica" maxLength={36} required /><small>Nazwa zostanie zapamiętana na tym urządzeniu dla kolejnych karier</small></label>
               <label>Miasto<input value={props.city} onChange={(event) => props.setCity(event.target.value)} placeholder="np. Radom" maxLength={40} /></label>
               {regions.length > 1 && <label>Województwo klubu<select value={props.region} onChange={(event) => props.setRegion(event.target.value)}>{regions.map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</select><small>Region określa grupę IV ligi, do której klub trafi po spadku.</small></label>}
-            </> : <label>Wybierz klub<select value={props.existingClub} onChange={(event) => props.setExistingClub(event.target.value)}>{clubsByLeague[props.league].map((club) => <option key={club} value={club}>{club} · {getClubCity(club)}</option>)}</select><small>Własna zapisana nazwa klubu i herb zostaną użyte również dla tej kariery.</small></label>}
-            <label>Poziom rozgrywek<select value={props.league} onChange={(event) => props.setLeague(event.target.value as LeagueId)}>
+            </> : <div className="setup-club-picker">
+              <label htmlFor="setup-club-search">Wybierz klub</label>
+              <div className="setup-club-selected">
+                <span className="setup-club-selected-mark"><Shield size={16} /></span>
+                <span><strong>{props.existingClub}</strong><small><MapPin size={11} />{getClubCity(props.existingClub)}</small></span>
+                <Check size={15} />
+              </div>
+              <div className="setup-club-search">
+                <Search size={15} aria-hidden="true" />
+                <input
+                  id="setup-club-search"
+                  type="search"
+                  value={clubSearchQuery}
+                  onChange={(event) => setClubSearchQuery(event.target.value)}
+                  placeholder="Szukaj po nazwie lub mieście"
+                  autoComplete="off"
+                  aria-label="Szukaj klubu po nazwie lub mieście"
+                />
+              </div>
+              <div className="setup-club-results" role="listbox" aria-label="Kluby w wybranej lidze">
+                {filteredClubs.length > 0
+                  ? filteredClubs.map((club) => <button
+                    key={club}
+                    type="button"
+                    role="option"
+                    aria-selected={club === props.existingClub}
+                    className={club === props.existingClub ? 'setup-club-result setup-club-result-selected' : 'setup-club-result'}
+                    onClick={() => props.setExistingClub(club)}
+                  >
+                    <span><strong>{club}</strong><small><MapPin size={10} />{getClubCity(club)}</small></span>
+                    {club === props.existingClub && <Check size={14} />}
+                  </button>)
+                  : <p className="setup-club-no-results">Nie znaleziono klubu pasującego do wyszukiwania.</p>}
+              </div>
+              <small className="setup-club-help">Własna zapisana nazwa klubu i herb zostaną użyte również dla tej kariery.</small>
+            </div>}
+            <label>Poziom rozgrywek<select value={props.league} onChange={(event) => {
+              setClubSearchQuery('')
+              props.setLeague(event.target.value as LeagueId)
+            }}>
               {leagueOptionsByTier.map((tier) => <optgroup key={tier.tier} label={`${tier.name} · poziom ${tier.tier}`}>{tier.leagues.map((league) => <option key={league.id} value={league.id}>{league.name} — {league.subtitle}{getLeagueTier(league.id) === 8 ? ' · polecany start' : ''}</option>)}</optgroup>)}
             </select><small>Polecamy zacząć od B-klasy. W regionach bez dostępnej B-klasy wybierz najniższą dostępną ligę.</small>{getLeagueTier(props.league) >= 6 && <small>W niższych ligach Podkarpacia, Zachodniopomorskiego, Pomorskiego, Warmińsko-Mazurskiego i Opolskiego działa autorski, uproszczony model awansów i spadków.</small>}</label>
             <div className="color-picker-field"><span>Kolory klubowe</span><div>{colors.map((color) => <button key={color} type="button" className={props.color === color ? 'color-swatch selected' : 'color-swatch'} style={{ background: color }} aria-label={`Wybierz kolor ${color}`} onClick={() => props.setColor(color)} />)}</div></div>

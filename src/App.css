@@ -1928,6 +1928,23 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .setup-form input::placeholder { color: #768177; }
 .setup-form select option { background: #1a211c; }
 .setup-form label small { color: #828e83; font-size: 8px; font-weight: 400; }
+.setup-club-picker { display: grid; gap: 7px; color: #c8d1c8; font-size: 9px; font-weight: 700; }
+.setup-club-selected { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 9px 10px; border: 1px solid #53643d; border-radius: 5px; background: #222b1e; }
+.setup-club-selected-mark { width: 28px; height: 28px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid #46553a; border-radius: 5px; background: #2b3625; color: #c9e78b; }
+.setup-club-selected > span:nth-child(2), .setup-club-result > span { display: grid; min-width: 0; gap: 4px; flex: 1; }
+.setup-club-selected strong, .setup-club-result strong { overflow: hidden; color: #e6ece3; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.setup-club-selected small, .setup-club-result small { display: flex; align-items: center; gap: 4px; color: #98a394; font-size: 8px; font-weight: 400; }
+.setup-club-selected > svg:last-child { flex: 0 0 auto; color: var(--lime); }
+.setup-club-search { position: relative; display: flex; align-items: center; }
+.setup-club-search > svg { position: absolute; left: 10px; z-index: 1; color: #879487; pointer-events: none; }
+.setup-club-search input { padding-left: 32px; }
+.setup-club-results { display: grid; max-height: 170px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid #303a31; border-radius: 5px; background: #141a15; }
+.setup-club-result { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 10px; border: 0; border-bottom: 1px solid #283129; background: transparent; text-align: left; }
+.setup-club-result:last-child { border-bottom: 0; }
+.setup-club-result:hover, .setup-club-result-selected { background: #222b1e; }
+.setup-club-result > svg { flex: 0 0 auto; color: var(--lime); }
+.setup-club-no-results { margin: 0; padding: 12px; color: #9ba69c; font-size: 9px; font-weight: 400; line-height: 1.5; }
+.setup-club-help { color: #828e83; font-size: 8px; font-weight: 400; line-height: 1.5; }
 .color-picker-field { display: grid; gap: 8px; color: #c8d1c8; font-size: 9px; font-weight: 700; }
 .color-picker-field > div { display: flex; gap: 8px; }
 .color-swatch { width: 22px; height: 22px; padding: 0; border: 2px solid transparent; border-radius: 50%; }
