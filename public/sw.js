@@ -1,5 +1,6 @@
 const CACHE_NAME = 'pmp27-shell-v2'
-const SHELL_FILES = ['/', '/manifest.webmanifest', '/images/pmp27-crest.png']
+const BASE_URL = new URL('./', self.registration.scope).pathname
+const SHELL_FILES = [BASE_URL, `${BASE_URL}manifest.webmanifest`, `${BASE_URL}images/pmp27-crest.png`]
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_FILES)))
@@ -29,7 +30,7 @@ self.addEventListener('fetch', (event) => {
         const cached = await caches.match(request)
         if (cached) return cached
         if (request.mode === 'navigate') {
-          const shell = await caches.match('/')
+          const shell = await caches.match(BASE_URL)
           if (shell) return shell
         }
         return Response.error()

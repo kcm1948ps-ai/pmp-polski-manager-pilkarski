@@ -3,14 +3,14 @@
   "short_name": "PMP27",
   "description": "Zbuduj własny klub i poprowadź go na szczyt polskiej ligi.",
   "lang": "pl",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#101411",
   "theme_color": "#101411",
   "icons": [
     {
-      "src": "/images/pmp27-crest.png",
+      "src": "./images/pmp27-crest.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"

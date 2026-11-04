@@ -20,6 +20,12 @@ npm run build
 npm run preview
 ```
 
+## Wdrożenie
+
+Projekt publikuje się automatycznie w GitHub Pages po każdym pushu do gałęzi `main`. W ustawieniach repozytorium (`Settings` → `Pages`) jako źródło wdrożenia wybierz `GitHub Actions`. Po zakończeniu workflow aplikacja będzie dostępna pod adresem:
+
+https://kcm1948ps-ai.github.io/pmp-polski-manager-pilkarski/
+
 Testy logiki terminarza i meczów:
 
 ```bash
