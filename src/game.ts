@@ -9454,6 +9454,8 @@ export function getTeamName(game: GameState, teamId: string) {
   return game.teams.find((team) => team.id === teamId)?.name
     ?? Object.values(game.leagueWorld ?? {}).flat().find((team) => team.id === teamId)?.name
     ?? game.polishCup?.teams.find((team) => team.id === teamId)?.name
+    ?? game.regionalCups?.flatMap((cup) => cup.teams).find((team) => team.id === teamId)?.name
+    ?? game.pmpLeague?.teams.find((team) => team.id === teamId)?.name
     ?? 'Nieznany klub'
 }
 

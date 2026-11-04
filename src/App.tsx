@@ -1147,6 +1147,7 @@ function getClubProfileData(game: GameState, teamId: string) {
   const worldTeam = worldEntry?.[1].find((team) => team.id === teamId)
   const cupTeam = game.polishCup?.teams.find((team) => team.id === teamId)
     ?? game.regionalCups?.flatMap((cup) => cup.teams).find((team) => team.id === teamId)
+    ?? game.pmpLeague?.teams.find((team) => team.id === teamId)
   const team = currentTeam ?? worldTeam ?? cupTeam
   if (!team) return null
   const leagueId = currentTeam

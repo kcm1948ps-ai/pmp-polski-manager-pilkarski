@@ -24,6 +24,7 @@ const {
   getLeagueChampionTrophyName,
   getLeagueTableZones,
   getSeasonAwards,
+  getTeamName,
   getSeasonRoundCount,
   getSeasonTeamOfSeason,
   isLocalDerby,
@@ -80,6 +81,49 @@ test('renaming a rival club updates every competition and keeps its original ide
   assert.equal(renamed.game.teams.find((team) => team.id === target.id)?.customizationIdentity, originalIdentity)
   assert.equal(renamed.game.teams.find((team) => team.id === target.id)?.customizationOriginalName, originalName)
   assert.equal(renameCareerClub(renamed.game, target.id, originalName).game.teams.find((team) => team.id === target.id)?.name, originalName)
+})
+
+test('team names resolve across regional cups and PMP League', () => {
+  const game = createGame('Testowy Klub', 'Warszawa', 'ekstraklasa', '#123456')
+  const regionalTeamId = 'regional-team-id'
+  const pmpTeamId = 'pmp-team-id'
+  game.regionalCups = [{
+    season: game.season,
+    regionId: 'mazowieckie',
+    stageId: 'central-preliminary',
+    teams: [{
+      id: regionalTeamId,
+      name: 'Regionalny Klub',
+      customizationIdentity: 'regionalny-klub|mazowieckie',
+      customizationOriginalName: 'Regionalny Klub',
+      strength: 68,
+      leagueId: 'fourth',
+      regionId: 'mazowieckie',
+    }],
+    participants: [regionalTeamId],
+    matches: [],
+    history: [],
+  }]
+  game.pmpLeague = {
+    season: game.season,
+    phase: 'groups',
+    startAt: '2026-07-01',
+    teams: [{
+      id: pmpTeamId,
+      name: 'PMP Klub',
+      customizationIdentity: 'pmp-klub|region-1',
+      customizationOriginalName: 'PMP Klub',
+      strength: 70,
+      leagueId: 'first',
+      regionId: 'region-1',
+    }],
+    groups: [],
+    matches: [],
+    history: [],
+    regionalChampions: {},
+  }
+  assert.equal(getTeamName(game, regionalTeamId), 'Regionalny Klub')
+  assert.equal(getTeamName(game, pmpTeamId), 'PMP Klub')
 })
 
 test('imported club lookup normalizes names, accents and repeated spaces', () => {
